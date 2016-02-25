@@ -3,7 +3,7 @@
 
 # PRESTANEO by Synolia
 
-**Prestaneo** is a **Prestashop addon** allowing to import catalogs and product data, from the Akeneo standard CSV files.
+**Prestaneo** is a **Prestashop addon** allowing to import catalogs and product data, from the **Akeneo** standard CSV files.
 
 ## How it works
 Prestaneo reads standard CSV files from the Akeneo exports in order to import data to your PrestaShop database. These data exchanges allow to import:
@@ -52,4 +52,4 @@ Multiple configurations are available in the addon graphic interface:
 ## About Synolia
 Founded in 2004, **[Synolia] (http://www.synolia.com)** is a French e-commerce & CRM company based in Lyon and Paris. With more than 650 e-commerce projects in B2B and B2C contexts, **Synolia** is specialized in designing and delivering the best customer experience during their all journey.
 
-**Synolia** provides the more innovative solutions and is the certified partner of Akeneo, Magento, OroCRM, PrestaShop Salesfusion, SugarCRM, Qlik, Zendesk. His ambition is to make each project a new success-story.
+**Synolia** provides the more innovative solutions and is the certified partner of **Akeneo**, Magento, OroCRM, **PrestaShop** Salesfusion, SugarCRM, Qlik, Zendesk. His ambition is to make each project a new success-story.
