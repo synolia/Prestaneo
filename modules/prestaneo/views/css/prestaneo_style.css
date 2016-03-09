@@ -1,0 +1,28 @@
+
+/* SynoSync Style */
+
+.ps_back-office .parts{
+    overflow: hidden;
+}
+
+.ps_back-office .row.panel.part {
+    overflow: hidden;
+    margin-right: 4px;
+}
+
+.ps_back-office .row.panel.part b {
+    font-size: 15px;
+}
+
+.ps_back-office .row.panel.part [class^="icon-"].top {
+    font-size: 35px;
+    margin-right: 10px;
+}
+
+.ps_back-office .row.panel.part .icon-download-alt.top:before {
+    content:"\f019" !important;
+}
+
+.icon-AdminSync:before {
+    content:"\f110";
+}

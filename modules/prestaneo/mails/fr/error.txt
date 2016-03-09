@@ -1,0 +1,10 @@
+
+[{shop_url}]
+
+Une erreur est survenue lors de la synchronisation,
+Details de l'erreur :
+
+{error_content}
+
+{shop_name}
+

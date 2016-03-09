@@ -1,0 +1,10 @@
+
+[{shop_url}]
+
+Rapport de la synchronisation,
+Details :
+
+{content}
+
+{shop_name}
+

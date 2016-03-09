@@ -1,0 +1,12 @@
+
+[{shop_url}]
+
+La synchronisation s'est bien déroulée.
+
+Rapport de la synchronisation,
+Details :
+
+{content}
+
+{shop_name}
+

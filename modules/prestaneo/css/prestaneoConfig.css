@@ -1,0 +1,53 @@
+/* Akeneo styme */
+
+table.table_mapping {
+    margin-bottom: 20px;
+}
+table.table_mapping th {
+    padding: 10px;
+}
+table.table_mapping tr.tr_clone td {
+    text-align: center;
+    padding: 10px;
+}
+table.table_mapping tr td label.chk_remove {
+    position: relative;
+    top: -2px;
+    margin-left: 2px;
+}
+form.form_mapping button.removeMapping {
+    background-color: #ffffff;
+    border: none;
+    padding: 0;
+}
+form.form_mapping .alerts {
+    display: block;
+    margin-top: 20px;
+}
+form.form_mapping p.info {
+    font-style: italic;
+    margin: 5px;
+    color: #ff0000;
+}
+form.form_mapping input.btn.custom {
+    margin: 0 0 0 10px;
+    border: 1px solid gray;
+    background: #ffffff;
+    position: relative;
+}
+form.form_mapping input.btn.custom:hover {
+    background: #e6e6e6;
+}
+.sw {
+    width: 40px !important;
+    text-align: center;
+}
+.mw {
+    width: 300px !important;
+}
+.cRed {
+    color: red;
+}
+.defaultForm {
+    clear: left;
+}
