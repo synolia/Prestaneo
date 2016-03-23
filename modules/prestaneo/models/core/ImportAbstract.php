@@ -95,11 +95,18 @@ class ImportAbstract extends Importer
     /**
      * Replaces offset names from Akeneo by the PrestaShop equivalents
      *
-     * @param $mappings
+     * @param array $mappings
+     * @param array $exclude list of PrestaShop fields for which name replacement should not be done
      */
-    protected function _mapOffsets($mappings) {
+    protected function _mapOffsets($mappings, $exclude = array()) {
         $newOffsets = array();
         $filter = '/(.+?)(-[a-zA-Z_-]+)$/';
+
+        if (!is_array($exclude)) {
+            $exclude = array($exclude);
+        }
+
+        $mappings = array_diff($mappings, $exclude);
 
         foreach ($this->_offsets as $fullField => $position) {
             if (preg_match($filter, $fullField, $matches)) {

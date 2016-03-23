@@ -91,7 +91,7 @@ class ImportVariant extends ImportAbstract
         }
 
         $this->_mover->finishAction(basename($reader->getCurrentFileName()), true);
-        true;
+        return true;
     }
 
     protected static function _resetMappingTmpAttributes()

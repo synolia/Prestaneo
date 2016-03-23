@@ -34,6 +34,12 @@ class UtilsFolder extends Utils
         return rmdir($dir);
     }
 
+    /**
+     * @param string $rootFolder
+     * @param string $pattern
+     *
+     * @return array
+     */
     public function getAllFilesInFolder($rootFolder, $pattern='*')
     {
         $iterator = new RecursiveIteratorIterator(
