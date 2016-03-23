@@ -19,6 +19,11 @@ class ImportAkeneo extends ImportAbstract
             return false;
         }
 
+        $attributeValueImporter = new ImportAttributeValues();
+        if (!$attributeValueImporter->import()) {
+            return false;
+        }
+
         $productImporter = new ImportProduct();
         if (!$productImporter->import()) {
             return false;

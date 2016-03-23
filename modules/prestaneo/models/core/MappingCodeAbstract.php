@@ -51,37 +51,4 @@ class MappingCodeAbstract extends ObjectModel
                 FROM ' . _DB_PREFIX_ . static::$definition['table'];
         return Db::getInstance()->executeS($sql);
     }
-
-    public static function getPrestashopField($champ_akeneo)
-    {
-        if (empty($champ_akeneo) || !$champ_akeneo)
-            return false;
-
-        $sql = 'SELECT `champ_prestashop`
-                FROM ' . _DB_PREFIX_ . static::$definition['table'] . '
-                WHERE `champ_akeneo` = "' . pSQL($champ_akeneo) . '"';
-        return Db::getInstance()->getValue($sql);
-    }
-
-    public static function getAkeneoField($champ_prestashop)
-    {
-        if (empty($champ_prestashop) || !$champ_prestashop)
-            return false;
-
-        $sql = 'SELECT `champ_akeneo`
-                FROM ' . _DB_PREFIX_ . static::$definition['table'] . '
-                WHERE `champ_prestashop` = "' . pSQL($champ_prestashop) . '"';
-        return Db::getInstance()->getValue($sql);
-    }
-
-    public static function existCodeAkeneo($code)
-    {
-        if (empty($code) || !$code)
-            return false;
-
-        $sql = 'SELECT `champ_akeneo`
-                FROM ' . _DB_PREFIX_ . static::$definition['table'] . '
-                WHERE `champ_akeneo` = "' . pSQL($code) . '"';
-        return Db::getInstance()->getValue($sql);
-    }
 }

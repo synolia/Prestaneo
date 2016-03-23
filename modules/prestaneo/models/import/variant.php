@@ -13,20 +13,21 @@ class ImportVariant extends ImportAbstract
      */
     public function process()
     {
-        $delimiter = Configuration::get('PS_IMPORT_DELIMITER') ? Configuration::get('PS_IMPORT_DELIMITER') : ';';
+        $delimiter = Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') : ';';
 
         $fileTransferHost = Configuration::get(MOD_SYNC_NAME.'_ftphost');
         if(!empty($fileTransferHost)) {
             $fileTransfer = $this->_getFtpConnection();
 
-            $fileTransfer->getFiles(Configuration::get('PS_IMPORT_VARIANTFTPPATH'), $this->_manager->getPath().'/files/', '*.csv');
+            $fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH'), $this->_manager->getPath().'/files/', '*.csv');
         }
-        $reader    = new CsvReader($this->_manager, $delimiter);
-        $dataLines = $reader->getData();
+        $reader      = new CsvReader($this->_manager, $delimiter);
+        $dataLines   = $reader->getData();
+        $currentFile = $reader->getCurrentFileName(0);
 
         if (!is_array($dataLines) || empty($dataLines)){
-            ('Nothing to import or file is not valid CSV');
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->logError('Nothing to import or file is not valid CSV');
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
@@ -36,7 +37,7 @@ class ImportVariant extends ImportAbstract
 
         if (!empty($missingFields)) {
             ('Missing required fields : ' . implode(', ', $missingFields));
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
@@ -46,17 +47,17 @@ class ImportVariant extends ImportAbstract
 
         $this->_mapOffsets(MappingAttributes::getAllPrestashopFields());
 
-        $currentFile    = $reader->getCurrentFileName(0);
+        $errorCount     = 0;
         $lastErrorCount = 0;
 
         foreach ($dataLines as $line => $data) {
             $nextFile = $reader->getCurrentFileName($line);
             if ($nextFile != $currentFile) {
                 $treatmentResult = 1;
-                if(count($this->_errors) > $lastErrorCount)
+                if($errorCount > $lastErrorCount)
                     $treatmentResult = 0;
                 $this->_mover->finishAction(basename($currentFile), $treatmentResult, 'import');
-                $lastErrorCount = count($this->_errors);
+                $lastErrorCount = $errorCount;
                 $currentFile    = $nextFile;
             }
 
@@ -69,7 +70,8 @@ class ImportVariant extends ImportAbstract
             $axis = $data[$this->_offsets['axis']];
 
             if (empty($code) || empty($axis)) {
-                $this->log('Code and/or axis are empty on line ' . ($line + 2));
+                $this->logError('Code and/or axis are empty on line ' . ($line + 2));
+                $errorCount++;
                 continue;
             }
 
@@ -84,13 +86,14 @@ class ImportVariant extends ImportAbstract
             $mapping->axis = $axis;
 
             if (!$mapping->save()){
-                $this->log('Error while saving : ' . $code . '/' . $axis . ' (line ' . ($line + 2) . ')');
+                $this->logError('Error while saving : ' . $code . '/' . $axis . ' (line ' . ($line + 2) . ')');
+                $errorCount++;
             } elseif (_PS_MODE_DEV_) {
                 $this->log('Variant ' . $code . ' added');
             }
         }
-
-        $this->_mover->finishAction(basename($reader->getCurrentFileName()), true);
+        $endStatus = ($errorCount == $lastErrorCount);
+        $this->_mover->finishAction(basename($currentFile), $endStatus);
         return true;
     }
 

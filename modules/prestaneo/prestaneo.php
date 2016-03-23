@@ -7,7 +7,8 @@ if (!defined('_PS_VERSION_'))
  * Include models files
  */
 
-define('MOD_FTP', true);
+if(!defined('MOD_FTP'))
+    define('MOD_FTP', true);
 if(!Module::getInstanceByName('cronjobs')){
     define('MOD_CRON', false);
 }else{
@@ -411,9 +412,17 @@ class Prestaneo extends Module
         if (!Db::getInstance()->execute($sql))
             $return = false;
 
+        $sql = 'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'mapping_attribute_values` (`champ_akeneo`,`champ_prestashop`, `required`) VALUES
+            ("code","code", 1),
+            ("attribute","attribute_group", 1),
+            ("label", "name", 1);';
+        if (!Db::getInstance()->execute($sql))
+            $return = false;
+
         $sql = 'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'mapping_features` (`champ_akeneo`,`champ_prestashop`, `required`) VALUES
             ("code","code", 1),
-            ("label","name", 1);';
+            ("label","name", 1),
+            ("type","type", 1);;';
         if (!Db::getInstance()->execute($sql))
             $return = false;
 
@@ -425,28 +434,8 @@ class Prestaneo extends Module
 			("price","price", 1),
 			("weight","weight", 1),
 			("description","description", 1),
-			("image1","image", 1),
 			("groups","groups", 1),
-			("quantity","quantity", 0),
-			("id_tax_rules_group","id_tax_rules_group", 0),
-			("wholesale_price","wholesale_price", 0),
-			("ean13","ean13", 0),
-			("upc","upc", 0),
-			("ecotax","ecotax", 0),
-			("width","width", 0),
-			("height","height", 0),
-			("depth","depth", 0),
-			("visibility","visibility", 0),
-			("description_short","description_short", 0),
-			("meta_title","meta_title", 0),
-			("meta_keywords","meta_keywords", 0),
-			("meta_description","meta_description", 0),
-			("available_now","available_now", 0),
-			("available_later","available_later", 0),
-			("available_for_order","available_for_order", 0),
-			("available_date","available_date", 0),
-			("show_price","show_price", 0),
-			("online_only","online_only", 0);';
+			("available","available_for_order", 1);';
         if (!Db::getInstance()->execute($sql))
             $return = false;
 
@@ -456,26 +445,28 @@ class Prestaneo extends Module
     protected function _installConfigurationKeys()
     {
         $return = true;
-        if (!Configuration::updateValue('PS_IMPORT_ENCLOSURE', '"'))
+        if (!Configuration::updateValue(MOD_SYNC_NAME . '_ipallowed',                           '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftphost',                          '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftplogin',                         '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftppassword',                      '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftppath',                          '/')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_dayshistoryfiles',                 '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_cache',                            '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE',                 '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_DELIMITER',                 ';')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH',          '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH',         '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH',        '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH', '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH',          '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT',       999)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES',            1)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES',              1)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS',        1)
+        ) {
             $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_DELIMITER', ';'))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_PRODUCTFTPPATH', ''))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_CATEGORYFTPPATH', ''))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_ATTRIBUTEFTPPATH', ''))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_VARIANTFTPPATH', ''))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_DEFAULTQTYPRODUCT', 999))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_RESETFEATURES', 1))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_RESETIMAGES', 1))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_RESETCOMBINATIONS', 1))
-            $return = false;
+        }
+
         return $return;
     }
 
@@ -660,6 +651,7 @@ class Prestaneo extends Module
             CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_code_features` (
                 `id_feature` int(11) NOT NULL,
                 `code` varchar(255),
+                `type` varchar(255),
                 PRIMARY KEY (`id_feature`)
             )ENGINE = InnoDB DEFAULT CHARSET=utf8;
         ';
@@ -712,6 +704,50 @@ class Prestaneo extends Module
             return false;
 
         $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_code_attributes` AUTO_INCREMENT = 1';
+        if (!Db::getInstance()->Execute($sql))
+            return false;
+
+        $sql = '
+            CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_attribute_values` (
+                `id_mapping` int(11) NOT NULL AUTO_INCREMENT,
+                `champ_akeneo` varchar(255),
+                `champ_prestashop` varchar(255),
+                `required` bool,
+                PRIMARY KEY (`id_mapping`)
+            )ENGINE = InnoDB DEFAULT CHARSET=utf8;
+        ';
+        if (!Db::getInstance()->Execute($sql))
+            return false;
+
+        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_attribute_values` AUTO_INCREMENT = 1';
+        if (!Db::getInstance()->Execute($sql))
+            return false;
+
+        $sql = '
+            CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_code_attribute_values` (
+                `id_attribute_value` int(11) NOT NULL,
+                `code` varchar(255),
+                PRIMARY KEY (`id_attribute_value`)
+            )ENGINE = InnoDB DEFAULT CHARSET=utf8;
+        ';
+        if (!Db::getInstance()->Execute($sql))
+            return false;
+
+        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_code_attribute_values` AUTO_INCREMENT = 1';
+        if (!Db::getInstance()->Execute($sql))
+            return false;
+
+        $sql = '
+            CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_code_feature_values` (
+                `id_feature_value` int(11) NOT NULL,
+                `code` varchar(255),
+                PRIMARY KEY (`id_feature_value`)
+            )ENGINE = InnoDB DEFAULT CHARSET=utf8;
+        ';
+        if (!Db::getInstance()->Execute($sql))
+            return false;
+
+        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_code_feature_values` AUTO_INCREMENT = 1';
         if (!Db::getInstance()->Execute($sql))
             return false;
 
@@ -807,6 +843,9 @@ class Prestaneo extends Module
             `'._DB_PREFIX_.'mapping_attributes`,
             `'._DB_PREFIX_.'mapping_tmp_attributes`,
             `'._DB_PREFIX_.'mapping_code_attributes`,
+            `'._DB_PREFIX_.'mapping_attribute_values`,
+            `'._DB_PREFIX_.'mapping_code_attribute_values`,
+            `'._DB_PREFIX_.'mapping_code_feature_values`,
             `'._DB_PREFIX_.'mapping_products`,
             `'._DB_PREFIX_.'mapping_products_groups`;
         ';
@@ -840,22 +879,24 @@ class Prestaneo extends Module
     }
 
     protected function _uninstallConfigurationKeys() {
-        if (!Configuration::deleteByName(MOD_SYNC_NAME.'_ipallowed')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_ftphost')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_ftplogin')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_ftppassword')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_dayshistoryfiles')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_cache')
-            || !Configuration::deleteByName('PS_IMPORT_ENCLOSURE')
-            || !Configuration::deleteByName('PS_IMPORT_DELIMITER')
-            || !Configuration::deleteByName('PS_IMPORT_PRODUCTFTPPATH')
-            || !Configuration::deleteByName('PS_IMPORT_CATEGORYFTPPATH')
-            || !Configuration::deleteByName('PS_IMPORT_ATTRIBUTEFTPPATH')
-            || !Configuration::deleteByName('PS_IMPORT_VARIANTFTPPATH')
-            || !Configuration::deleteByName('PS_IMPORT_DEFAULTQTYPRODUCT')
-            || !Configuration::deleteByName('PS_IMPORT_RESETFEATURES')
-            || !Configuration::deleteByName('PS_IMPORT_RESETIMAGES')
-            || !Configuration::deleteByName('PS_IMPORT_RESETCOMBINATIONS')
+        if (!Configuration::deleteByName(MOD_SYNC_NAME . '_ipallowed')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_ftphost')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_ftplogin')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_ftppassword')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_ftppath')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_dayshistoryfiles')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_cache')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_DELIMITER')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS')
         )
             return false;
 
@@ -1027,24 +1068,25 @@ class Prestaneo extends Module
         }
 
         $configurationValues=array(
-            MOD_SYNC_NAME.'_ipallowed'        => MOD_SYNC_NAME.'_ipallowed',
-            MOD_SYNC_NAME.'_dayshistoryfiles' => MOD_SYNC_NAME.'_dayshistoryfiles',
-            MOD_SYNC_NAME.'_ftphost'          => MOD_SYNC_NAME.'_ftphost',
-            MOD_SYNC_NAME.'_ftpport'          => MOD_SYNC_NAME.'_ftpport',
-            MOD_SYNC_NAME.'_ftppath'          => MOD_SYNC_NAME.'_ftppath',
-            MOD_SYNC_NAME.'_ftplogin'         => MOD_SYNC_NAME.'_ftplogin',
-            MOD_SYNC_NAME.'_ftppassword'      => MOD_SYNC_NAME.'_ftppassword',
-            MOD_SYNC_NAME.'_cache'            => MOD_SYNC_NAME.'_cache',
-            'PS_IMPORT_ENCLOSURE'             => 'enclosure',
-            'PS_IMPORT_DELIMITER'             => 'delimiter',
-            'PS_IMPORT_PRODUCTFTPPATH'        => 'productftppath',
-            'PS_IMPORT_CATEGORYFTPPATH'       => 'categoryftppath',
-            'PS_IMPORT_ATTRIBUTEFTPPATH'      => 'attributeftppath',
-            'PS_IMPORT_VARIANTFTPPATH'        => 'variantftppath',
-            'PS_IMPORT_RESETCOMBINATIONS'     => 'resetcombinations',
-            'PS_IMPORT_RESETIMAGES'           => 'resetimages',
-            'PS_IMPORT_RESETFEATURES'         => 'resetfeatures',
-            'PS_IMPORT_DEFAULTQTYPRODUCT'     => 'defaultqtyproduct',
+            MOD_SYNC_NAME . '_ipallowed'                        => MOD_SYNC_NAME.'_ipallowed',
+            MOD_SYNC_NAME . '_dayshistoryfiles'                 => MOD_SYNC_NAME.'_dayshistoryfiles',
+            MOD_SYNC_NAME . '_ftphost'                          => MOD_SYNC_NAME.'_ftphost',
+            MOD_SYNC_NAME . '_ftpport'                          => MOD_SYNC_NAME.'_ftpport',
+            MOD_SYNC_NAME . '_ftppath'                          => MOD_SYNC_NAME.'_ftppath',
+            MOD_SYNC_NAME . '_ftplogin'                         => MOD_SYNC_NAME.'_ftplogin',
+            MOD_SYNC_NAME . '_ftppassword'                      => MOD_SYNC_NAME.'_ftppassword',
+            MOD_SYNC_NAME . '_cache'                            => MOD_SYNC_NAME.'_cache',
+            MOD_SYNC_NAME . '_IMPORT_ENCLOSURE'                 => 'enclosure',
+            MOD_SYNC_NAME . '_IMPORT_DELIMITER'                 => 'delimiter',
+            MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH'          => 'productftppath',
+            MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH'         => 'categoryftppath',
+            MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH'        => 'attributeftppath',
+            MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH' => 'attributevaluesftppath',
+            MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH'          => 'variantftppath',
+            MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS'        => 'resetcombinations',
+            MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES'              => 'resetimages',
+            MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES'            => 'resetfeatures',
+            MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT'       => 'defaultqtyproduct',
         );
         foreach($configurationValues as $configurationName => $formName)
         {
@@ -1474,6 +1516,13 @@ class Prestaneo extends Module
                     ),
                     array(
                         'type'  => 'text',
+                        'label' => $this->l('Path to attribute values files'),
+                        'name'  => 'attributevaluesftppath',
+                        'class' => 'mw',
+                        'hint'  => $this->l('Relative to the server root path')
+                    ),
+                    array(
+                        'type'  => 'text',
                         'label' => $this->l('Path to variant files'),
                         'name'  => 'variantftppath',
                         'class' => 'mw',
@@ -1501,15 +1550,16 @@ class Prestaneo extends Module
             .'&configure='.$this->name.'&tab_module='.$this->tab.'&module_name='.$this->name;
         $helper->tpl_vars = array(
             'fields_value' => array(
-                MOD_SYNC_NAME.'_ftppassword' => Configuration::get(MOD_SYNC_NAME.'_ftppassword'),
-                MOD_SYNC_NAME.'_ftplogin'    => Configuration::get(MOD_SYNC_NAME.'_ftplogin'),
-                MOD_SYNC_NAME.'_ftphost'     => Configuration::get(MOD_SYNC_NAME.'_ftphost'),
-                MOD_SYNC_NAME.'_ftpport'     => Configuration::get(MOD_SYNC_NAME.'_ftpport'),
-                MOD_SYNC_NAME.'_ftppath'     => Configuration::get(MOD_SYNC_NAME.'_ftppath'),
-                'productftppath'             => Configuration::get('PS_IMPORT_PRODUCTFTPPATH'),
-                'categoryftppath'            => Configuration::get('PS_IMPORT_CATEGORYFTPPATH'),
-                'attributeftppath'           => Configuration::get('PS_IMPORT_ATTRIBUTEFTPPATH'),
-                'variantftppath'             => Configuration::get('PS_IMPORT_VARIANTFTPPATH'),
+                MOD_SYNC_NAME.'_ftppassword' => Configuration::get(MOD_SYNC_NAME . '_ftppassword'),
+                MOD_SYNC_NAME.'_ftplogin'    => Configuration::get(MOD_SYNC_NAME . '_ftplogin'),
+                MOD_SYNC_NAME.'_ftphost'     => Configuration::get(MOD_SYNC_NAME . '_ftphost'),
+                MOD_SYNC_NAME.'_ftpport'     => Configuration::get(MOD_SYNC_NAME . '_ftpport'),
+                MOD_SYNC_NAME.'_ftppath'     => Configuration::get(MOD_SYNC_NAME . '_ftppath'),
+                'productftppath'             => Configuration::get(MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH'),
+                'categoryftppath'            => Configuration::get(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH'),
+                'attributeftppath'           => Configuration::get(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH'),
+                'attributevaluesftppath'     => Configuration::get(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH'),
+                'variantftppath'             => Configuration::get(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH'),
             ),
         );
 
@@ -1702,6 +1752,12 @@ class Prestaneo extends Module
                         'label' => 'Lang',
                         'input' => array(
                             'name' => array('field' => 'name')
+                        )
+                    ),
+                    'custom' => array(
+                        'label' => 'Special fields',
+                        'input' => array(
+                            'type' => array('field' => 'type')
                         )
                     )
                 );
@@ -1914,10 +1970,10 @@ class Prestaneo extends Module
         $helper->token                    = Tools::getAdminTokenLite('AdminModules');
         $helper->tpl_vars                 = array(
             'fields_value' => array(
-                'defaultqtyproduct' => Configuration::get('PS_IMPORT_DEFAULTQTYPRODUCT'),
-                'resetcombinations' => Configuration::get('PS_IMPORT_RESETCOMBINATIONS'),
-                'resetimages'       => Configuration::get('PS_IMPORT_RESETIMAGES'),
-                'resetfeatures'     => Configuration::get('PS_IMPORT_RESETFEATURES'),
+                'defaultqtyproduct' => Configuration::get(MOD_SYNC_NAME . '_IMPORT_DEFAUL_TQTY_PRODUCT'),
+                'resetcombinations' => Configuration::get(MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS'),
+                'resetimages'       => Configuration::get(MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES'),
+                'resetfeatures'     => Configuration::get(MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES'),
             ),
             'languages'    => $this->context->controller->getLanguages(),
             'id_language'  => $this->context->language->id
@@ -1965,8 +2021,8 @@ class Prestaneo extends Module
         $helper->token                    = Tools::getAdminTokenLite('AdminModules');
         $helper->tpl_vars                 = array(
             'fields_value' => array(
-                'enclosure' => Configuration::get('PS_IMPORT_ENCLOSURE'),
-                'delimiter' => Configuration::get('PS_IMPORT_DELIMITER')
+                'enclosure' => Configuration::get(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE'),
+                'delimiter' => Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER')
             ),
             'languages'    => $this->context->controller->getLanguages(),
             'id_language'  => $this->context->language->id

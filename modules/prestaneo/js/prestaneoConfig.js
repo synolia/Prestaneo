@@ -1,10 +1,11 @@
 $(function () {
 
     var addNewMapping = (function () {
+        //No need to keep one var per form, as it is only used to differentiate the ids of each switch for their respective labels
         var nextId = -1;
 
         return function () {
-            var $table  = $(this).siblings('table').find('tbody');
+            var $table  = $(this).parent().prev().find('tbody');
             var $newRow = $table.find('.tr_clone').first().clone();
 
             $newRow.find('input, select').val('');
@@ -29,7 +30,7 @@ $(function () {
     })();
 
     // New entry = new mapping line
-    $('input.addNewMapping').on('click', addNewMapping);
+    $('button.addNewMapping').on('click', addNewMapping);
 
     // Tooltip info remove mapping
     $('form.form_mapping .removeMapping').tooltip();

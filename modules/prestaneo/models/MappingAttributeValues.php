@@ -1,12 +1,9 @@
 <?php
 
-class MappingProducts extends MappingAbstract
+class MappingAttributeValues extends MappingAbstract
 {
-    public $champ_akeneo;
-    public $champ_prestashop;
-
     public static $definition = array(
-        'table'   => 'mapping_products',
+        'table'   => 'mapping_attribute_values',
         'primary' => 'id_mapping',
         'fields'  => array(
             'champ_akeneo'     => array('type' => self::TYPE_STRING, 'validate' => 'isGenericName'),
@@ -14,12 +11,4 @@ class MappingProducts extends MappingAbstract
             'required'         => array('type' => self::TYPE_BOOL, 'validate' => 'isBool'),
         )
     );
-
-    public static function getImageFields()
-    {
-        $sql = 'SELECT `champ_akeneo`
-                FROM ' . _DB_PREFIX_ . static::$definition['table'] . '
-                WHERE `champ_prestashop` = "image"';
-        return Db::getInstance()->executeS($sql);
-    }
 }

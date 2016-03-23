@@ -18,7 +18,7 @@ class ImportAbstract extends Importer
      * @return mixed
      */
     protected function _cleanDataLine($line) {
-        $enclosure = (Configuration::get('PS_IMPORT_ENCLOSURE') ? Configuration::get('PS_IMPORT_ENCLOSURE') : ';');
+        $enclosure = (Configuration::get(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE') : ';');
 
         foreach ($line as &$item) {
             $item = preg_replace('/\s+/', ' ', $item);
@@ -51,7 +51,7 @@ class ImportAbstract extends Importer
                     continue;
                 }
 
-                $langId  = (int)LanguageCore::getIdByIso($isoCode, false);
+                $langId  = (int)Language::getIdByIso($isoCode, false);
 
                 if ($langId != 0) {
                     $this->_langs[$langId]   = $isoCode;
@@ -117,7 +117,7 @@ class ImportAbstract extends Importer
                 $suffix = '';
             }
 
-            if (isset($mappings[$field])) {
+            if (isset($mappings[$field]) && !isset($exclude[$field])) {
                 $newOffsets[$mappings[$field] . $suffix] = $position;
             } else {
                 $newOffsets[$fullField] = $position;

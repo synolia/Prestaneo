@@ -4,6 +4,7 @@ class MappingCodeFeatures extends MappingCodeAbstract
 {
     public $id_feature;
     public $code;
+    public $type;
 
     public static $definition = array(
         'table'   => 'mapping_code_features',
@@ -11,6 +12,8 @@ class MappingCodeFeatures extends MappingCodeAbstract
         'fields'  => array(
             'id_feature' => array('type' => self::TYPE_INT, 'validate' => 'isUnsignedId'),
             'code'       => array('type' => self::TYPE_STRING, 'validate' => 'isGenericName'),
+            'type'       => array('type' => self::TYPE_STRING, 'validate' => 'isGenericName'),
         )
     );
+
 }

@@ -12,22 +12,23 @@ class ImportCategory extends ImportAbstract
      */
     public function process()
     {
-        $delimiter = Configuration::get('PS_IMPORT_DELIMITER') ? Configuration::get('PS_IMPORT_DELIMITER') : ';';
+        $delimiter = Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') : ';';
 
         $fileTransferHost = Configuration::get(MOD_SYNC_NAME.'_ftphost');
         if(!empty($fileTransferHost)) {
             $fileTransfer = $this->_getFtpConnection();
 
-            $fileTransfer->getFiles(Configuration::get('PS_IMPORT_CATEGORYFTPPATH'), $this->_manager->getPath().'/files/', '*.csv');
+            $fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH'), $this->_manager->getPath().'/files/', '*.csv');
         }
 
         $reader        = new CsvReader($this->_manager, $delimiter);
         $contextShopId = (int)Context::getContext()->shop->id;
         $dataLines     = $reader->getData();
+        $currentFile   = $reader->getCurrentFileName(0);
 
         if (!is_array($dataLines) || empty($dataLines)){
-            $this->log('Nothing to import or file is not valid CSV');
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->logError('Nothing to import or file is not valid CSV');
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
@@ -36,8 +37,8 @@ class ImportCategory extends ImportAbstract
         $missingFields  = $this->_checkMissingRequiredFields($requiredFields, $headers);
 
         if (!empty($missingFields)) {
-            $this->log('Missing required fields : ' . implode(', ', $missingFields));
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->logError('Missing required fields : ' . implode(', ', $missingFields));
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
@@ -58,17 +59,17 @@ class ImportCategory extends ImportAbstract
         }
 
         $oldCategories  = $this->_getCategoriesToDeactivate($dataLines);
-        $currentFile    = $reader->getCurrentFileName(0);
+        $errorCount     = 0;
         $lastErrorCount = 0;
 
         foreach ($dataLines as $line => $data) {
             $nextFile = $reader->getCurrentFileName($line);
             if ($nextFile != $currentFile) {
                 $treatmentResult = 1;
-                if(count($this->_errors) > $lastErrorCount)
+                if($errorCount > $lastErrorCount)
                     $treatmentResult = 0;
                 $this->_mover->finishAction(basename($currentFile), $treatmentResult, 'import');
-                $lastErrorCount = count($this->_errors);
+                $lastErrorCount = $errorCount;
                 $currentFile    = $nextFile;
             }
 
@@ -79,7 +80,8 @@ class ImportCategory extends ImportAbstract
             $codeParent   = $data[$this->_offsets['id_parent']];
 
             if (empty($codeCategory)) {
-                $this->log("Missing category code on line " . ($line+2));
+                $this->logError("Missing category code on line " . ($line+2));
+                $errorCount++;
                 continue;
             }
 
@@ -88,7 +90,8 @@ class ImportCategory extends ImportAbstract
             } else {
                 $idParent = MappingCodeCategories::getIdByCode($codeParent);
                 if ($idParent === false) {
-                    $this->log('Parent category for ' . $codeCategory . ' does not exists yet (' . $codeParent . ')');
+                    $this->logError('Parent category for ' . $codeCategory . ' does not exists yet (' . $codeParent . ')');
+                    $errorCount++;
                     continue;
                 }
             }
@@ -133,7 +136,8 @@ class ImportCategory extends ImportAbstract
             $objCategory->is_root_category = 0;
 
             if (!$objCategory->save()) {
-                $this->log('Could not save category ' . $codeCategory);
+                $this->logError('Could not save category ' . $codeCategory);
+                $errorCount++;
                 continue;
             }
             else {
@@ -148,7 +152,8 @@ class ImportCategory extends ImportAbstract
                     $mapping->id_category = $objCategory->id;
 
                     if (!$mapping->add()) {
-                        $this->log('Could not save category mapping for ' . $codeCategory);
+                        $this->logError('Could not save category mapping for ' . $codeCategory);
+                        $errorCount++;
                     } elseif (_PS_MODE_DEV_) {
                         $this->log('Category ' . $codeCategory . ' mapping saved');
                     }
@@ -156,25 +161,29 @@ class ImportCategory extends ImportAbstract
             }
 
             if (!$this->_associateShop($objCategory, $contextShopId)) {
-                $this->log('Could not associate category ' . $codeCategory . ' to shop ' . $contextShopId);
+                $this->logError('Could not associate category ' . $codeCategory . ' to shop ' . $contextShopId);
+                $errorCount++;
             } elseif (_PS_MODE_DEV_) {
                 $this->log('Category ' . $codeCategory . ' associated to shop ' . $contextShopId);
             }
         }
 
+        $endStatus = ($errorCount == $lastErrorCount);
+        $this->_mover->finishAction(basename($currentFile), $endStatus);
+
         if (!$this->_regeneratePositions($contextShopId)) {
-            $this->log('Could not regenerate categories position for shop ' . $contextShopId);
+            $this->logError('Could not regenerate categories position for shop ' . $contextShopId);
         } elseif (_PS_MODE_DEV_) {
             $this->log('Categories position regenerated for shop ' . $contextShopId);
         }
 
         if (!$this->_deactivateCategoriesById($oldCategories)) {
-            $this->log('Could not deactivate old categories : ' . implode(', ', $oldCategories));
+            $this->logError('Could not deactivate old categories : ' . implode(', ', $oldCategories));
         } elseif (_PS_MODE_DEV_ && !empty($oldCategories)) {
             $this->log('Old categories deactivated (' . implode(',', $oldCategories) . ')');
         }
 
-        $this->_mover->finishAction(basename($reader->getCurrentFileName()), true);
+
         return true;
     }
 
