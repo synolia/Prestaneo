@@ -1,13 +1,17 @@
 <?php
 class ImportProduct extends ImportAbstract
 {
-    protected $_offsetsName = null;
-    protected $_fields = null;
-    protected $_quantityDefault = 0;
-    protected $_delimiter = "";
+    protected $_offsetsName       = null;
+    protected $_fields            = null;
+
+    protected $_resetImages       = false;
+    protected $_resetFeatures     = false;
+    protected $_resetCombinations = false;
+    protected $_quantityDefault   = 0;
+    protected $_delimiter         = "";
 
     public static $icon  = 'cubes';
-    public static $order = 4;
+    public static $order = 5;
 
     /**
      * Imports products
@@ -18,38 +22,59 @@ class ImportProduct extends ImportAbstract
      */
     public function process()
     {
-        $this->_delimiter = (Configuration::get('PS_IMPORT_DELIMITER') ? Configuration::get('PS_IMPORT_DELIMITER') : ';');
-
-        $folderPath = $this->_manager->getPath() . '/files/';
-
-        $fileTransferHost = Configuration::get(MOD_SYNC_NAME.'_ftphost');
-        if(!empty($fileTransferHost)) {
-            $fileTransfer = $this->_getFtpConnection();
-
-            $fileTransfer->getFiles(Configuration::get('PS_IMPORT_PRODUCTFTPPATH'), $folderPath, '*.csv');
-            $fileTransfer->getFiles(Configuration::get('PS_IMPORT_PRODUCTFTPPATH'), $folderPath, '*.zip');
-        }
+        $this->_delimiter = (Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') : ';');
 
         $folderUtil = Utils::exec('Folder');
-        $archives   = $folderUtil->getAllFilesInFolder($folderPath, '*.zip');
+        $path       = $this->_manager->getPath() . '/files/';
 
-        Utils::exec('Zip')->extractAll($archives, $folderPath);
+        if ($folderUtil->isFolderEmpty($path)) {
+            $fileTransferHost = Configuration::get(MOD_SYNC_NAME . '_ftphost');
+            if (!empty($fileTransferHost)) {
+                if (_PS_MODE_DEV_) {
+                    $this->log('Fetching files from FTP');
+                }
+                $fileTransfer = $this->_getFtpConnection();
+                $distantPath  = Configuration::get(MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH');
+
+                $files = $fileTransfer->getFolderContent(array(), $distantPath);
+
+                if (in_array('files', $files)) {
+                    $success = $fileTransfer->recursiveGetFiles($distantPath . '/files/', $path . 'files/');
+                    $success &= $fileTransfer->getFiles($distantPath, $path, '*.csv');
+                } else {
+                    $success = $fileTransfer->getFiles($distantPath, $path, array('*.zip', '*.csv'));
+                }
+
+                if (!$success) {
+                    $this->logError('There was an error while retrieving the files from the FTP');
+                    $folderUtil->delTree($path, false);
+                    return false;
+                }
+            }
+        }
+
+        $archives = $folderUtil->getAllFilesInFolder($path, '*.zip');
+
+        if (!empty($archives)) {
+            $hasImages = true;
+            Utils::exec('Zip')->extractAll($archives, $path);
+        }
 
         $reader = new CsvReader($this->_manager, $this->_delimiter);
         $reader->setExtension('.csv');
 
-        $dataLines = $reader->getData();
-        $fileName  = $reader->getCurrentFileName();
+        $dataLines   = $reader->getData();
+        $currentFile = $reader->getCurrentFileName(0);
 
-        $resetImages            = Configuration::get('PS_IMPORT_RESETIMAGES');
-        $resetFeatures          = Configuration::get('PS_IMPORT_RESETFEATURES');
-        $resetCombinations      = Configuration::get('PS_IMPORT_RESETCOMBINATIONS');
-        $this->_quantityDefault = Configuration::get('PS_IMPORT_DEFAULTQTYPRODUCT');
+        $this->_resetImages       = Configuration::get(MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES');
+        $this->_resetFeatures     = Configuration::get(MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES');
+        $this->_resetCombinations = Configuration::get(MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS');
+        $this->_quantityDefault   = Configuration::get(MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT');
 
         if (!is_array($dataLines) || empty($dataLines)){
-            $this->log('Nothing to import or file is not valid CSV');
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
-            $this->_cleanWorkingDirectory($archives);
+            $this->logError('Nothing to import or file is not valid CSV');
+            $this->_mover->finishAction(basename($currentFile), false);
+            $folderUtil->delTree($path, false);
             return false;
         }
 
@@ -58,81 +83,112 @@ class ImportProduct extends ImportAbstract
         $missingFields  = $this->_checkMissingRequiredFields($requiredFields, $headers);
 
         if (!empty($missingFields)) {
-            $this->log('Missing required fields : ' . implode(', ', $missingFields));
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
-            $this->_cleanWorkingDirectory($archives);
+            $this->logError('Missing required fields : ' . implode(', ', $missingFields));
+            $this->_mover->finishAction(basename($currentFile), false);
+            $folderUtil->delTree($path, false);
             return false;
         }
 
-        $headers[]      = 'emptyValue';
-        $headers[]      = 'nullValue';
-        $this->_offsets = array_flip($headers);
+        $offsets = array_flip($headers);
 
-        $this->_getLangsInCsv($headers);
-        $this->_mapOffsets(MappingProducts::getAllPrestashopFields());
-
-        $mappingCodeFeatures = MappingCodeFeatures::getAll();
-        $defaultLanguage     = Configuration::get('PS_LANG_DEFAULT');
-
-        $processedProductIds = array();
-        $defaultCurrency     = Currency::getDefaultCurrency()->iso_code;
-
-        if (isset($this->_offsets['price-' . $defaultCurrency])) {
-            $priceOffset = $this->_offsets['price-' . $defaultCurrency];
-        } elseif (isset($this->_offsets['price'])) {
-            $priceOffset = $this->_offsets['price'];
+        //Getting the list of the picture fields in the csv
+        $mappedPictureFields  = MappingProducts::getImageFields();
+        $pictureFields = array();
+        foreach ($mappedPictureFields as $mappedPictureField) {
+            if (array_key_exists($mappedPictureField['champ_akeneo'], $offsets)) {
+                $pictureFields[$mappedPictureField['champ_akeneo']] = $offsets[$mappedPictureField['champ_akeneo']];
+            }
         }
 
-        $this->makeOffsetRedirections($mappingCodeFeatures);
+        if(!isset($hasImages))
+            $hasImages = true;
+        if (empty($pictureFields)) {
+            $hasImages = false;
+        }
 
-        $currentFile    = $reader->getCurrentFileName(0);
+        $axisOffsets = array();
+
+        foreach (MappingTmpAttributes::getAll() as $mapping) {
+            $axes = explode(',', $mapping['axis']);
+            foreach ($axes as $axis) {
+                if (array_key_exists($axis, $offsets)) {
+                    $axisOffsets[$mapping['code']][$axis] = $offsets[$axis];
+                }
+            }
+        }
+
+        $defaultCurrency = Currency::getDefaultCurrency()->iso_code;
+
+        if (isset($offsets['price-' . $defaultCurrency])) {
+            $priceOffset = $offsets['price-' . $defaultCurrency];
+            unset($offsets['price-' . $defaultCurrency]);
+        } elseif (isset($offsets['price'])) {
+            $priceOffset = $offsets['price'];
+            unset($offsets['price']);
+        } else {
+            $priceOffset = 'emptyValue';
+        }
+
+        $this->_getLangsInCsv($headers);
+
+        $featureOffsets = $this->_getFeatureOffsets();
+
+        $this->_mapOffsets('Product', MappingProducts::getAllPrestashopFields(), array('image'));
+
+        $defaultLangId       = Configuration::get('PS_LANG_DEFAULT');
+        $processedProductIds = array();
+
+        $referenceOffset     = isset($this->_offsets['default']['reference']) ?           $this->_offsets['default']['reference'] :           'emptyValue';
+        $ean13Offset         = isset($this->_offsets['default']['ean13']) ?               $this->_offsets['default']['ean13'] :               'emptyValue';
+        $idShopDefaultOffset = isset($this->_offsets['default']['id_shop_default']) ?     $this->_offsets['default']['id_shop_default'] :     'emptyValue';
+        $categoryOffset      = isset($this->_offsets['default']['id_category_default']) ? $this->_offsets['default']['id_category_default'] : 'emptyValue';
+
+        unset(
+            $this->_offsets['default']['reference'],
+            $this->_offsets['default']['ean13'],
+            $this->_offsets['default']['id_shop_default'],
+            $this->_offsets['default']['id_category_default']
+        );
+
+        $errorCount     = 0;
         $lastErrorCount = 0;
 
         foreach ($dataLines as $line => $data) {
             $nextFile = $reader->getCurrentFileName($line);
             if ($nextFile != $currentFile) {
                 $treatmentResult = 1;
-                if(count($this->_errors) > $lastErrorCount)
+                if($errorCount > $lastErrorCount)
                     $treatmentResult = 0;
                 $this->_mover->finishAction(basename($currentFile), $treatmentResult, 'import');
-                $lastErrorCount = count($this->_errors);
+                $lastErrorCount = $errorCount;
                 $currentFile    = $nextFile;
             }
 
             if ($data === false || $data == array(null))  {
-                $this->log('Product line wrong, skipping : ' . ($line + 2));
+                $this->logError('Product line wrong, skipping : ' . ($line + 2));
+                $errorCount++;
                 continue;
             }
 
             $data      = $this->_cleanDataLine($data);
-            $reference = $data[$this->_offsets['reference']];
-            $groupCode = $data[$this->_offsets['groups']];
+            $reference = $data[$referenceOffset];
+            $groupCode = $data[$this->_offsets['special']['groups']];
 
-            $data[$this->_offsets['emptyValue']] = '';
-            $data[$this->_offsets['nullValue']]  = null;
+            $data['emptyValue'] = '';
 
             if (empty($reference)) {
-                $this->log('Missing reference on line ' . ($line + 2));
+                $this->logError('Missing reference on line ' . ($line + 2));
+                $errorCount++;
                 continue;
             } elseif (_PS_MODE_DEV_) {
                 $this->log('Importing ' . $reference);
             }
 
-            $featureValues          = array();
-            $names                  = array();
-            $linkRewrites           = array();
-            $descriptionShorts      = array();
-            $descriptions           = array();
-            $metaTitles             = array();
-            $metaKeywords           = array();
-            $metaDescriptions       = array();
-            $availableNowInLang     = array();
-            $availableLaterInLang   = array();
-
             //Is out of the product update because it is needed even if the line is only a combination of an existing product
-            $ean13 = $data[$this->_offsets['ean13']];
+            $ean13 = $data[$ean13Offset];
             if (empty($ean13) || !Validate::isEan13($ean13)) {
-                $this->log($reference . ' : ean13 not valid');
+                $this->logNotification($reference . ' : ean13 not valid');
+                $errorCount++;
                 $ean13 = "";
             }
 
@@ -159,129 +215,92 @@ class ImportProduct extends ImportAbstract
                 }
             }
 
-            $shopDefaultId = (isset($this->_offsets['id_shop_default']) ? $data[$this->_offsets['id_shop_default']] : Context::getContext()->shop->id);
+            $defaultShopId = (!empty($data[$idShopDefaultOffset]) ? $data[$idShopDefaultOffset] : Context::getContext()->shop->id);
+            Shop::setContext(Shop::CONTEXT_SHOP, $defaultShopId);
 
             if ($isNewProduct) {
-                foreach ($this->_langs as $langId => $isoCode) {
-                    $suffixLang = '-' . $this->_labels[$isoCode];
+                foreach ($this->_offsets['lang'] as $field => $offsets) {
+                    foreach ($offsets as $idLang => $offset) {
+                        $product->{$field}[$idLang] = $data[$offset];
+                    }
+                }
 
-                    $name = $data[$this->_offsets['name' . $suffixLang]];
+                foreach ($this->_offsets['default'] as $field => $offset) {
+                    $product->{$field} = $data[$offset];
+                }
 
-                    $names[$langId]                = $name;
-                    $linkRewrites[$langId]         = Tools::link_rewrite($name);
-                    $descriptionShorts[$langId]    = $data[$this->_offsets['description_short' . $suffixLang]];
-                    $descriptions[$langId]         = $data[$this->_offsets['description'       . $suffixLang]];
-                    $metaTitles[$langId]           = $data[$this->_offsets['meta_title'        . $suffixLang]];
-                    $metaKeywords[$langId]         = $data[$this->_offsets['meta_keywords'     . $suffixLang]];
-                    $metaDescriptions[$langId]     = $data[$this->_offsets['meta_description'  . $suffixLang]];
-                    $availableNowInLang[$langId]   = $data[$this->_offsets['available_now'     . $suffixLang]];
-                    $availableLaterInLang[$langId] = $data[$this->_offsets['available_later'   . $suffixLang]];
+                foreach ($this->_offsets['date'] as $field => $offset) {
+                    if (Validate::isDate($data[$offset])) {
+                        $product->{$field} = $data[$offset];
+                    } else {
+                        $this->logError('Wrong date format for field ' . $field . ' : ' . $data['offset'] . '(for product ' . $reference . ')');
+                        $errorCount++;
+                    }
+                }
 
-                    // Save Features
-                    foreach ($mappingCodeFeatures as $mapping) {
-                        $codeMapping = $mapping['code'];
-                        $currentVal  = $data[$this->_offsets[$codeMapping . $suffixLang]];
+                //Adding missing attributes and default values for some
+                $product->reference = $reference;
+                $product->ean13     = $ean13;
 
-                        if (!empty($currentVal)) {
-                            $featureValues[$codeMapping][$langId] = $currentVal;
+                //If no name is given, the default one is the reference
+                if (!is_array($product->name)) {
+                    $product->name = array($defaultLangId => $product->name);
+                }
+
+                if (!array_filter($product->name)) {
+                    $product->name[$defaultLangId] = $reference;
+                }
+
+                //link_rewrites are needed so if they are not present, we set them from the name
+                if (!is_array($product->link_rewrite)) {
+                    $product->link_rewrite = array($defaultLangId => $product->link_rewrite);
+                }
+
+                if (!array_filter($product->link_rewrite)) {
+                    $links = array();
+                    foreach ($product->name as $idLang => $value) {
+                        $links[$idLang] = Tools::link_rewrite($value);
+                    }
+                    $product->link_rewrite = $links;
+                }
+
+                if (empty($data[$categoryOffset])) {
+                    $categories    = array();
+                    $categoryCodes = explode(',', $data[$this->_offsets['special']['categories']]);
+
+                    foreach ($categoryCodes as $categoryCode) {
+                        $categoryId = (int)MappingCodeCategories::getIdByCode($categoryCode);
+                        if ($categoryId > 0) {
+                            $categories[] = $categoryId;
+                        } else {
+                            $this->logError($reference . ' : category ' . $categoryCode . ' does not exist');
+                            $errorCount++;
                         }
                     }
-                }
-                Shop::setContext(Shop::CONTEXT_SHOP, $shopDefaultId);
-
-                $wholesalePrice = $data[$this->_offsets['wholesale_price']];
-                $upc            = $data[$this->_offsets['upc']];
-                $ecotax         = $data[$this->_offsets['ecotax']];
-                $availableDate  = $data[$this->_offsets['available_date']];
-
-                // Controls
-                if (empty($upc) || !Validate::isUpc($upc)) {
-                    $this->log($reference . ' : upc not valid');
-                    $upc = "";
-                }
-                if (empty($ecotax) || !Validate::isPrice($ecotax)) {
-                    $this->log($reference . ' : ecotax not valid');
-                    $ecotax = 0;
-                }
-                if (empty($wholesalePrice) || !Validate::isPrice($wholesalePrice)) {
-                    $this->log($reference . ' : wholesale not valid');
-                    $wholesalePrice = 0;
-                }
-                if (!empty($availableDate) && !Validate::isDateFormat($availableDate)) {
-                    $dates = explode('/', $availableDate);
-                    if (count($dates) == 3) {
-                        $availableDate = $dates[2] . '-' . $dates[1] . '-' . $dates[0];
-                        $this->log($reference . ' available date reformated : ' . $availableDate);
-                    } else {
-                        $availableDate = "";
-                        $this->log($reference . ' : available date not valid');
-                    }
                 } else {
-                    $availableDate = "";
-                    $this->log($reference . ' : available date not valid');
+                    $categories = preg_split('#,#', $data[$categoryOffset], -1, PREG_SPLIT_NO_EMPTY);
                 }
 
-                // Identifiers categories
-                $categories    = array();
-                $categoryCodes = explode(',', $data[$this->_offsets['categories']]);
-
-                foreach ($categoryCodes as $categoryCode) {
-                    $categoryId = (int)MappingCodeCategories::getIdByCode($categoryCode);
-                    if ($categoryId > 0) {
-                        $categories[] = $categoryId;
-                    }
-                    else {
-                        $this->log($reference . ' : category ' . $categoryCode . ' does not exist');
-                    }
-                }
-
-                // Id default category
                 if (!empty($categories)) {
-                    $defaultCategory = $categories[0];
+                    $product->id_category_default = $categories[0];
                 } else {
-                    $defaultCategory = 2;
+                    $product->id_category_default = 2;
                 }
 
-                // Fields
-                if (isset($priceOffset) && empty($groupCode)) {
-                    if (empty($data[$priceOffset]) || !Validate::isPrice($data[$priceOffset])) {
-                        $this->log($reference . ' : price not valid');
-                    } else {
-                        $product->price = $data[$priceOffset];
-                    }
+                if (!empty($groupCode)) {
+                    $product->price = 0;
+                } else {
+                    $product->price = $data[$priceOffset];
                 }
 
-                $product->reference           = $reference;
-                $product->wholesale_price     = $wholesalePrice;
-                $product->ean13               = $ean13;
-                $product->upc                 = $upc;
-                $product->ecotax              = $ecotax;
-                $product->available_date      = $availableDate;
-                $product->id_category_default = $defaultCategory;
-
-                $product->active              = $data[$this->_offsets['active']];
-                $product->id_tax_rules_group  = $data[$this->_offsets['id_tax_rules_group']];
-                $product->width               = $data[$this->_offsets['width']];
-                $product->height              = $data[$this->_offsets['height']];
-                $product->depth               = $data[$this->_offsets['depth']];
-                $product->weight              = $data[$this->_offsets['weight']];
-                $product->available_for_order = $data[$this->_offsets['available_for_order']];
-                $product->show_price          = $data[$this->_offsets['show_price']];
-                $product->online_only         = $data[$this->_offsets['online_only']];
-
-                $product->condition           = 'new';
-
-                switch ($data[$this->_offsets['visibility']]) {
+                switch ($product->visibility) {
                     case "1":
-                    case "none":
                         $product->visibility = "none";
                         break;
                     case "2":
-                    case "catalog":
                         $product->visibility = "catalog";
                         break;
                     case "3":
-                    case "search":
                         $product->visibility = "search";
                         break;
                     default:
@@ -289,185 +308,207 @@ class ImportProduct extends ImportAbstract
                         break;
                 }
 
-                // Lang fields
-                $product->name              = $names;
-                $product->link_rewrite      = $linkRewrites;
-                $product->description       = $descriptions;
-                $product->description_short = $descriptionShorts;
-                $product->meta_title        = $metaTitles;
-                $product->meta_keywords     = $metaKeywords;
-                $product->meta_description  = $metaDescriptions;
-                $product->available_now     = $availableNowInLang;
-                $product->available_later   = $availableLaterInLang;
+                if (!isset($this->_offsets['default']['shop'])) {
+                    $product->shop = $defaultShopId;
+                }
 
-                // Other
-                $product->date_add       = date('Y-m-d H:i:s');
-                $product->shop           = $shopDefaultId;
-                $product->id_shop_list[] = $shopDefaultId;
+                if (!isset($this->_offsets['default']['id_shop_list'])) {
+                    $product->id_shop_list[] = $defaultShopId;
+                }
 
                 // Force re-indexing search process with new datas
                 $product->indexed = 0;
 
-                if (!$product->save()) {
-                    $this->log($reference . ' : could not be saved');
+                //Must be true if product is available for order
+                $product->show_price = ($product->available_for_order || $product->show_price);
+
+                try {
+                    if (!$product->save()) {
+                        $this->logError($reference . ' : could not be saved');
+                        $errorCount++;
+                        continue;
+                    } elseif (_PS_MODE_DEV_) {
+                        $this->log($reference . ' : saved');
+                    }
+                } catch (PrestaShopDatabaseException $e) {
+                    $this->logError($e->getMessage());
+                    $errorCount++;
                     continue;
-                } elseif (_PS_MODE_DEV_) {
-                    $this->log($reference . ' : saved');
                 }
 
                 //Product has been saved
                 $processedProductIds[$product->id] = true;
 
-                // Save Features (= Attributs Akeneo)
-                if ($resetFeatures) {
+                // Save Features
+                if ($this->_resetFeatures) {
                     if (!$product->deleteFeatures()) {
-                        $this->log($reference . ' : could not remove features');
+                        $this->logError($reference . ' : could not remove features');
+                        $errorCount++;
                     }
                 }
 
-                foreach ($featureValues as $featureCode => $featureValue) {
-                    $featureId = MappingCodeFeatures::getIdByCode($featureCode);
-                    if (!$featureId) {
-                        $this->log($reference . ' : feature ' . $featureCode . ' does not exist');
-                        continue;
+                foreach ($featureOffsets['select'] as $featureCode => $featureInfos) {
+                    if (!empty($groupCode) && array_key_exists($featureCode, $axisOffsets[$groupCode])) {
+                        continue; //Skipping variant attributes
                     }
 
-                    $featureValueId = $this->_addFeatureValue($featureId, $featureValue);
+                    $featureValueCode = $data[$featureInfos['offset']];
 
-                    if (!$featureValueId) {
-                        $this->log($reference . ' : could not save feature value for ' . $featureCode);
-                        continue;
-                    }
+                    if (!empty($featureValueCode)) {
+                        $featureValueId   = MappingCodeFeatureValues::getIdByCodeAndFeature($featureValueCode, $featureCode);
 
-                    if (!Product::addFeatureProductImport($product->id, $featureId, $featureValueId)) {
-                        $this->log($reference . ' : could not associate to feature value ' . $featureCode);
+                        if (!$featureValueId) {
+                            $this->logError($reference . ' : feature value ' . $featureValueCode . ' does not exist for feature ' . $featureCode);
+                            $errorCount++;
+                            continue;
+                        }
+
+                        if (!Product::addFeatureProductImport($product->id, $featureInfos['id_feature'], $featureValueId)) {
+                            $this->logError($reference . ' : could not associate to feature value ' . $featureValueCode . ' for feature ' . $featureCode);
+                            $errorCount++;
+                            continue;
+                        }
+
+                        if (_PS_MODE_DEV_) {
+                            $this->log($reference . ' : feature value ' . $featureValueCode . ' added for feature ' . $featureCode);
+                        }
                     }
                 }
-                if (_PS_MODE_DEV_) {
-                    $this->log($reference . ' : features added');
+
+                //Custom feature values
+                foreach ($featureOffsets['default'] as $featureCode => $featureInfos) {
+                    $featureValues = array();
+                    $emptyValue    = true;
+
+                    if (is_array($featureInfos['offset'])) {
+                        foreach ($featureInfos['offset'] as $idLang => $offset) {
+                            $featureValues[$idLang] = $data[$offset];
+                            $emptyValue &= empty($data[$offset]);
+                        }
+                    } else {
+                        $featureValues[$defaultLangId] = $data[$featureInfos['offset']];
+                        $emptyValue = empty($data[$featureInfos['offset']]);
+                    }
+
+                    if (!$emptyValue) {
+                        $featureValueId = $this->_addFeatureValue($featureInfos['id_feature'], $featureValues);
+
+                        if (!$featureValueId) {
+                            $this->logError($reference . ' : could not save feature value for ' . $featureCode);
+                            $errorCount++;
+                            continue;
+                        }
+
+                        if (!Product::addFeatureProductImport($product->id, $featureInfos['id_feature'], $featureValueId)) {
+                            $this->logError($reference . ' : could not associate to feature value ' . $featureCode . ' for feature ' . $featureCode);
+                            $errorCount++;
+                        }
+
+                        if (_PS_MODE_DEV_) {
+                            $this->log($reference . ' : custom feature value ' . $featureValues[$defaultLangId] . ' added for feature ' . $featureCode);
+                        }
+                    }
                 }
 
                 //Save Associations Categories
                 if (!$product->updateCategories($categories)) {
-                    $this->log($reference . ' : could not update categories');
+                    $this->logError($reference . ' : could not update categories');
+                    $errorCount++;
                 }
 
                 if ($knownProduct) {
-                    if ($resetImages) {
+                    if ($this->_resetImages) {
                         if (!$product->deleteImages()) {
-                            $this->log($reference . ' : could not delete images');
+                            $this->logError($reference . ' : could not delete images');
+                            $errorCount++;
                         } elseif (_PS_MODE_DEV_) {
                             $this->log($reference . ' : images deleted');
                         }
                     }
 
-                    if (!empty($groupCode)) {
-                        if ($resetCombinations) {
-                            if (!$product->deleteProductAttributes()) {
-                                $this->log($reference . ' : error while resetting product combinations');
-                            } elseif (_PS_MODE_DEV_) {
-                                $this->log($reference . ' : combinations deleted');
-                            }
+                    if (!empty($groupCode) && $this->_resetCombinations) {
+                        if (!$product->deleteProductAttributes()) {
+                            $this->logError($reference . ' : error while resetting product combinations');
+                            $errorCount++;
+                        } elseif (_PS_MODE_DEV_) {
+                            $this->log($reference . ' : combinations deleted');
                         }
                     }
                 } else {
                     //We save quantities only if the product is totally new
-                    StockAvailable::setQuantity($product->id, 0, $this->_quantityDefault, $shopDefaultId);
+                    StockAvailable::setQuantity($product->id, 0, $this->_quantityDefault, $defaultShopId);
                 }
             }
 
+            $addedImages = array();
             //Save Images
-            $imageString = $data[$this->_offsets['image']];
-            if (!empty($imageString)) {
-                $imagePaths = explode(',', $imageString);
-                if ($imagePaths) {
-                    $isCover         = !((bool)Product::getCover($product->id));
-                    $highestPosition = Image::getHighestPosition($product->id);
+            if ($hasImages) {
+                $isCover         = !((bool)Product::getCover($product->id));
+                $highestPosition = Image::getHighestPosition($product->id);
 
-                    foreach ($imagePaths as $imageRelativePath) {
-                        $imagePath = $folderPath . $imageRelativePath;
+                foreach ($pictureFields as $pictureField => $offset) {
+                    $imageRelativePath = $data[$offset];
+                    if (empty($imageRelativePath)) {
+                        continue;
+                    }
+                    $imagePath = $path . $imageRelativePath;
 
-                        if (!file_exists($imagePath)) {
-                            $this->log($reference . ' : image ' . $imagePath . ' does not exist');
-                            continue;
-                        }
+                    if (!file_exists($imagePath)) {
+                        $this->logError($reference . ' : image ' . $imagePath . ' does not exist');
+                        $errorCount++;
+                        continue;
+                    }
 
-                        $image             = new Image();
-                        $image->id_product = $product->id;
-                        $image->position   = ++$highestPosition;
-                        $image->legend     = $names;
-                        $image->cover      = $isCover;
+                    $image             = new Image();
+                    $image->id_product = $product->id;
+                    $image->position   = ++$highestPosition;
+                    $image->legend     = $product->name;
+                    $image->cover      = $isCover;
 
-                        if (!$image->add()) {
-                            $this->log($reference . ' : could not save image ' . $imagePath);
+                    if (!$image->add()) {
+                        $this->logError($reference . ' : could not save image ' . $imagePath);
+                        $errorCount++;
+                        $highestPosition--;
+                    } else {
+                        if (!$this->copyImg($product->id, $image->id, $imagePath, 'products', true)) {
+                            $this->logError($reference . ' : could not copy image ' . $imagePath);
+                            $errorCount++;
+                            $image->delete();
                             $highestPosition--;
                         } else {
-                            if (!$this->copyImg($product->id, $image->id, $imagePath, 'products', true)) {
-                                $this->log($reference . ' : could not copy image ' . $imagePath);
-                                $image->delete();
-                                $highestPosition--;
-                            } else {
-                                unlink($imagePath);
+                            if ($isCover) {
+                                //Forcing cache cleaning
+                                Cache::clean('Product::getCover_' . $product->id . '-' . $defaultShopId);
                             }
+                            $addedImages[] = $image->id;
                         }
-                        $isCover = false;
                     }
-                    if (_PS_MODE_DEV_) {
-                        $this->log($reference . ' : images added');
-                    }
+                    unlink($imagePath);
+                    $isCover = false;
+                }
+                if (!empty($addedImages) && _PS_MODE_DEV_) {
+                    $this->log($reference . ' : images added');
                 }
             }
 
             //Save Combination + Quantity Stock
             if (!empty($groupCode)) {
                 $attributeIds = array();
-                $axes         = explode(',', MappingTmpAttributes::getAxisByCode($groupCode));
 
-                foreach ($axes as $axis) {
-                    $combinationValues = array();
+                foreach ($axisOffsets[$groupCode] as $axis => $offset) {
+                    $attributeValueId = MappingCodeAttributeValues::getIdByCodeAndGroup($data[$offset], $axis);
 
-                    foreach ($this->_langs as $langId => $isoCode) {
-                        $field = $axis . '-' . $this->_labels[$isoCode];
-
-                        if (isset($this->_offsets[$field])) {
-                            $currentVal = $data[$this->_offsets[$field]];
-                        } elseif (isset($this->_offsets[$axis])) {
-                            $currentVal = $data[$this->_offsets[$axis]];
-                        } else {
-                            $currentVal = '';
-                        }
-
-                        if (!empty($currentVal)) {
-                            $combinationValues[$langId] = $currentVal;
-                        }
-                    }
-
-                    $attributeGroupId = MappingCodeAttributes::getIdByCode($axis);
-                    $attributeId = $this->_getAttribute($attributeGroupId, $combinationValues);
-                    if (!$attributeId) {
-                        $attribute                     = new Attribute();
-                        $attribute->id_attribute_group = $attributeGroupId;
-                        $attribute->position           = Attribute::getHigherPosition($attributeGroupId) + 1;
+                    if (!$attributeValueId) {
+                        $this->logError($reference . ' : attribute value ' . $data[$offset] . ' does not exist for attribute ' . $axis);
+                        $errorCount++;
                     } else {
-                        $attribute = new Attribute($attributeId);
+                        $attributeIds[] = $attributeValueId;
                     }
-
-                    $attribute->name = $combinationValues;
-
-                    if (!$attribute->save()) {
-                        $this->log($reference . " : could not save attribute " . $combinationValues[$defaultLanguage]);
-                    } else {
-                        if (!$attribute->associateTo(array($shopDefaultId))) {
-                            $this->log($reference . ' : could not associate attribute ' . $combinationValues[$defaultLanguage] . ' to shop ' . $shopDefaultId);
-                        }
-                    }
-
-                    $attributeIds[] = (int)$attribute->id;
                 }
 
-                $price = (isset($priceOffset) ? $data[$priceOffset] : null);
+                $price = (isset($priceOffset) ? $data[$priceOffset] : 0);
 
-                $this->addOrUpdateProductAttributeCombination($product, $ean13, $attributeIds, $reference, $price);
+                $this->addOrUpdateProductAttributeCombination($product, $ean13, $attributeIds, $reference, $price, $addedImages);
 
                 $mappingId = MappingProductsGroups::getMappingByGroupCode($groupCode);
                 if ($mappingId === false) {
@@ -476,8 +517,13 @@ class ImportProduct extends ImportAbstract
                     $mapping->group_code = $groupCode;
 
                     if (!$mapping->save()) {
-                        $this->log($reference . ' : could not save mapping with group ' . $groupCode);
+                        $this->logError($reference . ' : could not save mapping with group ' . $groupCode);
+                        $errorCount++;
                     }
+                }
+
+                if ($isNewProduct) {
+                    $product->checkDefaultAttributes();
                 }
 
                 if (_PS_MODE_DEV_) {
@@ -486,93 +532,18 @@ class ImportProduct extends ImportAbstract
             }
         }
 
+        $endStatus = ($errorCount == $lastErrorCount);
+        $this->_mover->finishAction(basename($currentFile), $endStatus);
+        $folderUtil->delTree($path, false);
+
         // Search Indexation
         if (!Search::indexation()) {
-            $this->log('Product reindexation failed');
+            $this->logError('Product reindexation failed');
         } elseif (_PS_MODE_DEV_) {
             $this->log('Products reindexed');
         }
 
-        $this->_mover->finishAction(basename($fileName), true);
-        $this->_cleanWorkingDirectory($archives);
-
         return true;
-    }
-
-    /**
-     * Get attributeId if exists
-     *
-     * @param int $attributeGroupId
-     * @param array $names
-     * @return array|bool|false|null|string
-     */
-    protected static function _getAttribute($attributeGroupId, $names)
-    {
-        if (!$names || $attributeGroupId == 0 || !$attributeGroupId)
-            return false;
-
-        if (!Combination::isFeatureActive()) {
-            return array();
-        }
-        $sql = '
-			SELECT a.`id_attribute`
-			FROM `' . _DB_PREFIX_ . 'attribute_group` ag
-			LEFT JOIN `' . _DB_PREFIX_ . 'attribute_group_lang` agl
-				ON (ag.`id_attribute_group` = agl.`id_attribute_group` AND agl.`id_lang` = ' . pSQL(key($names)) . ')
-			LEFT JOIN `' . _DB_PREFIX_ . 'attribute` a
-				ON a.`id_attribute_group` = ag.`id_attribute_group`
-			LEFT JOIN `' . _DB_PREFIX_ . 'attribute_lang` al
-				ON (a.`id_attribute` = al.`id_attribute` AND al.`id_lang` = ' . pSQL(key($names)) . ')
-			' . Shop::addSqlAssociation('attribute_group', 'ag') . '
-			' . Shop::addSqlAssociation('attribute', 'a') . '
-			WHERE al.`name` = \'' . pSQL(current($names)) . '\' AND ag.`id_attribute_group` = ' . (int)$attributeGroupId . '
-			ORDER BY agl.`name` ASC, a.`position` ASC
-		';
-        return Db::getInstance()->getValue($sql);
-    }
-
-    /**
-     * Add or update feature value
-     *
-     * @param int $featureId
-     * @param array $langFeaturesValues
-     *
-     * @return bool|int
-     * @throws PrestaShopDatabaseException
-     */
-    protected static function _addFeatureValue($featureId, $langFeaturesValues)
-    {
-        if (!$featureId || $featureId == 0 || !is_array($langFeaturesValues))
-            return false;
-
-        $sql = '
-            SELECT fv.`id_feature_value`
-            FROM ' . _DB_PREFIX_ . 'feature_value fv
-            LEFT JOIN ' . _DB_PREFIX_ . 'feature_value_lang fvl ON (fvl.`id_feature_value` = fv.`id_feature_value`)
-            WHERE fvl.`value` = \'' . pSQL(current($langFeaturesValues)) . '\'
-                AND fv.`id_feature` = ' . (int)$featureId . '
-                AND fvl.`id_lang` = ' . pSQL(key($langFeaturesValues)) . '
-            GROUP BY fv.`id_feature_value` LIMIT 1
-        ';
-
-        $result = Db::getInstance()->executeS($sql);
-
-        if (!$result || empty($result)) {
-            $featureValue             = new FeatureValue();
-            $featureValue->id_feature = (int)$featureId;
-        } else {
-            $featureValue             = new FeatureValue((int)$result[0]['id_feature_value']);
-        }
-
-        $featureValue->value  = $langFeaturesValues;
-        $featureValue->custom = 0;
-
-        if (!$featureValue->save()) {
-            return false;
-        } else {
-            return $featureValue->id;
-        }
-
     }
 
     /**
@@ -604,82 +575,58 @@ class ImportProduct extends ImportAbstract
      * Add or update a product combination
      *
      * @param Product $product
-     * @param string $attributeEan
-     * @param array $attributeValueIds , all value ids for ONE combination (example for red (value id=1), XL (value id=9) => array(array(0 => 1, 1 => 9, 2 => 3))
-     * @param $reference
-     * @param $price
+     * @param string  $attributeEan
+     * @param array   $attributeValueIds , all value ids for ONE combination (example for red (value id=1), XL (value id=9) => array(array(0 => 1, 1 => 9, 2 => 3))
+     * @param string  $reference
+     * @param float   $price
+     * @param array   $images
+     *
      * @return int product attribute id if success
-     * @internal param bool $default
-     * @internal param bool $attributeAvailableDate
      */
-    protected function addOrUpdateProductAttributeCombination(Product $product, $attributeEan, array $attributeValueIds, $reference, $price)
+    protected function addOrUpdateProductAttributeCombination(Product $product, $attributeEan, array $attributeValueIds, $reference, $price, $images)
     {
         if (!$product)
             return false;
 
-        $imageId  = 0;
         $returnId = true;
 
         // Image combination
-        $cover = Product::getCover($product->id);
-        if ($cover) {
-            $imageId = $cover['id_image'];
+        if (empty($images)) {
+            $cover = Product::getCover($product->id);
+            if ($cover) {
+                $images[] = $cover['id_image'];
+            }
         }
 
         $productAttributeId = $product->productAttributeExists($attributeValueIds, false, null, false, $returnId);
 
         if ($productAttributeId > 0) {
-            $product->updateAttribute($productAttributeId,
-                null,//attribute_wholesale_price
-                $price,//attribute_price
-                null,//attribute_weight
-                null,//attribute_unit_impact
-                null,//attribute_ecotax
-                $imageId,//id_image_attr
-                $reference,//attribute_reference
-                $attributeEan,
-                null,
-                '',//attribute_location
-                '',//attribute_upc
-                null,//attribute_minimal_quantity
-                '0000-00-00',
-                false,//update_all_fields
-                array()//id_shop_list
-            );
+            $combination = new Combination($productAttributeId);
+            if (!$this->_resetImages) {
+                $images = array_unique(array_merge($images, $product->_getAttributeImageAssociations($productAttributeId)));
+            }
         } else {
-            $productAttributeId = $product->addCombinationEntity(
-                0,//attribute_wholesale_price
-                $price,//attribute_price
-                0,//attribute_weight
-                0,//attribute_unit_impact
-                0,//attribute_ecotax
-                Configuration::get('PS_IMPORT_DEFAULTQTYPRODUCT'),//quantity
-                $imageId,//id_image_attr
-                $reference,//attribute_reference
-                null,
-                $attributeEan,
-                false,//attribute_default
-                '',//attribute_location
-                '',//attribute_upc
-                1,//attribute_minimal_quantity
-                array(),//id_shop_list
-                '0000-00-00'
-            );
+            $combination             = new Combination();
+            $combination->id_product = $product->id;
+            $combination->price      = $price;
+            $combination->add();
 
-            if ($productAttributeId === false) {
+            if (!$combination->id) {
                 return false;
             }
 
-            StockAvailable::setQuantity($product->id, $productAttributeId, $this->_quantityDefault);
+            $combination->setAttributes($attributeValueIds);
+            StockAvailable::setQuantity($product->id, $combination->id, $this->_quantityDefault);
         }
+
+        $combination->reference = $reference;
+        $combination->ean13     = $attributeEan;
+
+        $combination->setImages($images);
+        $combination->update();
 
         StockAvailable::setProductDependsOnStock($product->id, $product->depends_on_stock, null, $productAttributeId);
         StockAvailable::setProductOutOfStock($product->id, $product->out_of_stock, null, $productAttributeId);
-
-        $combination = new Combination($productAttributeId);
-        $combination->setAttributes($attributeValueIds);
-
-        $product->checkDefaultAttributes();
 
         return (int)$productAttributeId;
     }
@@ -803,119 +750,80 @@ class ImportProduct extends ImportAbstract
     }
 
     /**
-     * Adds offset for value that might by missing, making them fallback on offsets that leads to empty or null values
-     * This let us avoid multiple isset statement for each products
+     * Add or update feature value
      *
-     * @param array $mappingCodeFeatures
+     * @param int $featureId
+     * @param array $langFeaturesValues
+     *
+     * @return bool|int
+     * @throws PrestaShopDatabaseException
      */
-    protected function makeOffsetRedirections($mappingCodeFeatures) {
-        foreach ($this->_langs as $langId => $isoCode) {
-            $suffixLang = '-' . $this->_labels[$isoCode];
+    protected static function _addFeatureValue($featureId, $langFeaturesValues)
+    {
+        if (!$featureId || $featureId == 0 || !is_array($langFeaturesValues))
+            return false;
 
-            $nameOffset = 'name' . $suffixLang;
+        $sql = '
+            SELECT fv.`id_feature_value`
+            FROM ' . _DB_PREFIX_ . 'feature_value fv
+            LEFT JOIN ' . _DB_PREFIX_ . 'feature_value_lang fvl ON (fvl.`id_feature_value` = fv.`id_feature_value`)
+            WHERE fvl.`value` = \'' . pSQL(current($langFeaturesValues)) . '\'
+                AND fv.`id_feature` = ' . (int)$featureId . '
+                AND fvl.`id_lang` = ' . pSQL(key($langFeaturesValues)) . '
+            GROUP BY fv.`id_feature_value` LIMIT 1
+        ';
 
-            if (!isset($this->_offsets[$nameOffset])) {
-                if (isset($this->_offsets['name'])) {
-                    $this->_offsets[$nameOffset] = $this->_offsets['name'];
+        $result = Db::getInstance()->executeS($sql);
+
+        if (!$result || empty($result)) {
+            $featureValue             = new FeatureValue();
+            $featureValue->id_feature = (int)$featureId;
+        } else {
+            $featureValue             = new FeatureValue((int)$result[0]['id_feature_value']);
+        }
+
+        $featureValue->value  = $langFeaturesValues;
+        $featureValue->custom = 0;
+
+        if (!$featureValue->save()) {
+            return false;
+        } else {
+            return $featureValue->id;
+        }
+    }
+
+    protected function _getFeatureOffsets()
+    {
+        $features     = array(
+            'select'  => array(),
+            'default' => array()
+        );
+
+        $filter       = '#^(.+?)-(\w{2,3})$#';
+        $offsetFields = array_keys($this->_offsets);
+
+        foreach (MappingCodeFeatures::getAll() as $mapping) {
+            $matching = preg_grep('#^' . $mapping['code'] . '(-\w{2,3})?$#', $offsetFields);
+
+            if (!empty($matching)) {
+
+                if ($mapping['type'] == 'pim_catalog_simpleselect') {
+                    $featureType = 'select';
                 } else {
-                    $this->_offsets[$nameOffset] = $this->_offsets['reference'];
+                    $featureType = 'default';
                 }
-            }
 
-            if (!isset($this->_offsets['description_short' . $suffixLang])) {
-                $this->_offsets['description_short' . $suffixLang] = $this->_offsets['emptyValue'];
-            }
+                $features[$featureType][$mapping['code']]['id_feature'] = $mapping['id_feature'];
 
-            if (!isset($this->_offsets['description' . $suffixLang])) {
-                $this->_offsets['description' . $suffixLang] = $this->_offsets['emptyValue'];
-            }
-
-            if (!isset($this->_offsets['meta_title' . $suffixLang])) {
-                $this->_offsets['meta_title' . $suffixLang] = $this->_offsets['emptyValue'];
-            }
-
-            if (!isset($this->_offsets['meta_keywords' . $suffixLang])) {
-                $this->_offsets['meta_keywords' . $suffixLang] = $this->_offsets['emptyValue'];
-            }
-
-            if (!isset($this->_offsets['meta_description' . $suffixLang])) {
-                $this->_offsets['meta_description' . $suffixLang] = $this->_offsets['emptyValue'];
-            }
-
-            if (!isset($this->_offsets['available_now' . $suffixLang])) {
-                $this->_offsets['available_now' . $suffixLang] = $this->_offsets['emptyValue'];
-            }
-
-            if (!isset($this->_offsets['available_later' . $suffixLang])) {
-                $this->_offsets['available_later' . $suffixLang] = $this->_offsets['emptyValue'];
-            }
-
-            foreach ($mappingCodeFeatures as $mapping) {
-                $codeMapping = $mapping['code'];
-                $field = $codeMapping . $suffixLang;
-
-                if (!isset($this->_offsets[$field])) {
-                    if (isset($this->_offsets[$codeMapping])) {
-                        $this->_offsets[$field] = $this->_offsets[$codeMapping];
+                foreach ($matching as $field) {
+                    if (preg_match($filter, $field, $results)) {
+                        $features[$featureType][$mapping['code']]['offset'][$this->_langs[$results[2]]] = $this->_offsets[$field];
                     } else {
-                        $this->_offsets[$field] = $this->_offsets['emptyValue'];
+                        $features[$featureType][$mapping['code']]['offset'] = $this->_offsets[$field];
                     }
                 }
             }
         }
-
-        if (!isset($this->_offsets['active'])) {
-            $this->_offsets['active'] = $this->_offsets['nullValue'];
-        }
-
-        if (!isset($this->_offsets['id_tax_rules_group'])) {
-            $this->_offsets['id_tax_rules_group'] = $this->_offsets['nullValue'];
-        }
-
-        if (!isset($this->_offsets['width'])) {
-            $this->_offsets['width'] = $this->_offsets['nullValue'];
-        }
-
-        if (!isset($this->_offsets['height'])) {
-            $this->_offsets['height'] = $this->_offsets['nullValue'];
-        }
-
-        if (!isset($this->_offsets['depth'])) {
-            $this->_offsets['depth'] = $this->_offsets['nullValue'];
-        }
-
-        if (!isset($this->_offsets['weight'])) {
-            $this->_offsets['weight'] = $this->_offsets['nullValue'];
-        }
-
-        if (!isset($this->_offsets['available_for_order'])) {
-            $this->_offsets['available_for_order'] = $this->_offsets['nullValue'];
-        }
-
-        if (!isset($this->_offsets['show_price'])) {
-            $this->_offsets['show_price'] = $this->_offsets['nullValue'];
-        }
-
-        if (!isset($this->_offsets['online_only'])) {
-            $this->_offsets['online_only'] = $this->_offsets['nullValue'];
-        }
-    }
-
-    /**
-     * Cleans the working directory from any archive or image directory
-     *
-     * @param array $archives
-     */
-    protected function _cleanWorkingDirectory($archives)
-    {
-        $imageFolder = $this->_manager->getPath() . '/files/files';
-
-        if (file_exists($imageFolder)) {
-            Utils::exec('Folder')->delTree($imageFolder);
-        }
-
-        foreach ($archives as $archive) {
-            unlink($archive);
-        }
+        return $features;
     }
 }

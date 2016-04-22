@@ -70,7 +70,53 @@ Class UtilsSftp
         return true;
     }
 
-    public function getFiles($distantFolderPath, $localFolderPath, $grep=null)
+    public function recursiveGetFiles($distantFolderPath, $localFolderPath, $grep = array())
+    {
+        $sftpClient = $this->_getHandler();
+
+        if (!$sftpClient->cd($distantFolderPath)) {
+            throw new Exception('Can\'t open sftp folder : ' . $distantFolderPath, 5);
+        }
+
+        $ls = $sftpClient->rawls();
+
+        if (!is_array($grep)) {
+            $grep = array($grep);
+        }
+
+        $return = true;
+        foreach ($ls as $file) {
+            preg_match('/^(.)(?:\S+\s+){8}(.+)$/', $file, $matches);
+            //$matches[1] is the type of file
+            //$matches[2] is the name of the file
+
+            $distantFile = $distantFolderPath . $matches[2];
+            $localFile   = $localFolderPath . $matches[2];
+
+            if ($matches[1] == 'd') {
+                if(!($this->recursiveGetFiles($distantFile . '/', $localFile . '/', $grep))) {
+                    $return = false;
+                }
+            } elseif ($matches[1] == '-') {
+                $isMatch = empty($grep);
+
+                foreach ($grep as $pattern) {
+                    if (fnmatch($pattern, $matches[2])) {
+                        $isMatch = true;
+                        break;
+                    }
+                }
+
+                if ($isMatch && !$this->getFile($distantFile, $localFile)) {
+                    $return = false;
+                }
+            }
+        }
+
+        return $return;
+    }
+
+    public function getFiles($distantFolderPath, $localFolderPath, $grep=array())
     {
         $includePath = get_include_path();
         set_include_path(dirname(__FILE__).'/../librairies/phpseclib-0.3.1/');
@@ -79,7 +125,7 @@ Class UtilsSftp
             $localFolderPath = null;
         }
         $matchingFileList = $this->getFolderContent($grep, $distantFolderPath);
-        $return = empty($matchingFileList);
+        $return = !empty($matchingFileList);
         foreach($matchingFileList as $matchingFile)
         {
             if(!$this->getFile($matchingFile, $localFolderPath.'/'.$matchingFile))
@@ -91,7 +137,7 @@ Class UtilsSftp
         return $return;
     }
 
-    public function getFolderContent($grep=null, $path=null)
+    public function getFolderContent($grep=array(), $path=null)
     {
         $sftpClient = $this->_getHandler();
         if($path)
@@ -103,10 +149,22 @@ Class UtilsSftp
         }
         $folderContents       = $sftpClient->ls();
         $formatFolderContents = array();
-        foreach($folderContents as $folderContent)
-        {
-            if(empty($grep) || fnmatch($grep, $folderContent['text']))
-            {
+
+        if (!is_array($grep)) {
+            $grep = array($grep);
+        }
+
+        foreach ($folderContents as $folderContent) {
+            $isMatch = empty($grep);
+
+            foreach ($grep as $pattern) {
+                if (fnmatch($pattern, $folderContent['text'])) {
+                    $isMatch = true;
+                    break;
+                }
+            }
+
+            if ($isMatch) {
                 $formatFolderContents[] = $folderContent['text'];
             }
         }

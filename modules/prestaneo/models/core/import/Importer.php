@@ -36,8 +36,10 @@ abstract class Importer extends Prestaneo implements IImporter
     public function end()
     {
         $this->_logger->writeLog(date('d/m/Y H:i:s').' End of '. get_class($this));
-        $this->sendErrors();
-        $this->sendNotifications();
+        if(_PS_MODE_DEV_ || Parameter::load($_GET, 'debug', 'int')) {
+            $this->sendErrors();
+            $this->sendNotifications();
+        }
     }
 
     public function log($message)

@@ -31,6 +31,7 @@ class AdminSyncConfigController extends ModuleAdminController
         $this->bootstrap = true;
         $this->context = Context::getContext();
         parent::__construct();
+        $this->module->setSelfLink($this->context->link->getAdminLink($this->controller_name));
     }
 
 
@@ -49,20 +50,15 @@ class AdminSyncConfigController extends ModuleAdminController
 
     public function display()
     {
-        $smartyVariables = array();
-        $smartyVariables = array_merge($smartyVariables,
-            array(
-                'cronpath'      => $this->context->shop->getBaseURL().'modules/'.$this->module->name.'/cron.php',
-                'mod_sync_name' => MOD_SYNC_NAME,
-            )
-        );
-        if(count($smartyVariables)) {
-            $this->context->smarty->assign($smartyVariables);
-        }
+        $this->context->smarty->assign(array(
+            'cronpath'      => $this->context->shop->getBaseURL().'modules/'.$this->module->name.'/cron.php',
+            'mod_sync_name' => MOD_SYNC_NAME,
+            'selfLink'      => $this->module->getSelfLink()
+        ));
 
-        $this->content = '';
-        $this->content.= Overrider::getInstance()->display(__FILE__, 'actions.tpl' );
-        $this->content.= $this->module->renderForm();
+        $this->content = Overrider::getInstance()->display(__FILE__, 'actions.tpl');
+        $this->content .= $this->module->renderForm();
+
         if(MOD_FTP) {
             $this->content .= $this->module->renderFormFtp();
         }
@@ -70,12 +66,8 @@ class AdminSyncConfigController extends ModuleAdminController
         $this->content .= $this->module->renderFormConfiguration();
 
         $this->content = Overrider::getInstance()->getContent($this->content);
-        $this->content = preg_replace(
-            '#(\s*\<\s*form.*)(?=\saction)\saction\="[^"]*"([^>]*\>\s*)#i',
-            '$1$2',
-            $this->content
-        );
-        $this->context->smarty->assign('content', $this->content );
+
+        $this->context->smarty->assign('content', $this->content);
         return parent::display();
     }
 }

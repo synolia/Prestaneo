@@ -7,7 +7,8 @@ if (!defined('_PS_VERSION_'))
  * Include models files
  */
 
-define('MOD_FTP', true);
+if(!defined('MOD_FTP'))
+    define('MOD_FTP', true);
 if(!Module::getInstanceByName('cronjobs')){
     define('MOD_CRON', false);
 }else{
@@ -32,13 +33,15 @@ class Prestaneo extends Module
     protected static $_registeredActions = array();
     protected static $_readFolders = array();
 
+    protected static $_selfLink = '';
+
     private static $_includedPaths = array();
     private static $_instance;
 
     public function __construct()
     {
         $this->name = MOD_SYNC_NAME;
-        $this->version = '0.1.0';
+        $this->version = '0.1.2';
         $this->author = MOD_SYNC_DISPLAY_AUTHOR;
         $this->bootstrap = true;
 
@@ -47,6 +50,10 @@ class Prestaneo extends Module
         $this->description = $this->l(MOD_SYNC_DISPLAY_NAME);
         if (!self::$_including && $this->active)
             self::_autoInclude($this->getLocalPath(), $this->active);
+
+        if(!self::$_selfLink) {
+            $this->setSelfLink($this->context->link->getAdminLink('AdminModules', true) . '&configure=' . MOD_SYNC_NAME);
+        }
     }
 
     public static function getInstance()
@@ -374,6 +381,12 @@ class Prestaneo extends Module
         if (!parent::install()
             || !$this->registerHook('actionAdminControllerSetMedia')
             || !$this->registerHook('dashboardZoneTwo')
+            || !$this->registerHook('actionCategoryDelete')
+            || !$this->registerHook('actionAttributeGroupDelete')
+            || !$this->registerHook('actionAttributeDelete')
+            || !$this->registerHook('actionFeatureDelete')
+            || !$this->registerHook('actionFeatureValueDelete')
+            || !$this->registerHook('actionProductDelete')
             || !$this->_installConfigurationKeys()
         )
             return false;
@@ -399,8 +412,8 @@ class Prestaneo extends Module
         $return = true;
 
         $sql = 'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'mapping_categories` (`champ_akeneo`,`champ_prestashop`, `required`) VALUES
-            ("code","id_category", 1),
-            ("parent","id_parent", 1),
+            ("code","code", 1),
+            ("parent","code_parent", 1),
             ("label","name", 1);';
         if (!Db::getInstance()->execute($sql))
             $return = false;
@@ -411,9 +424,17 @@ class Prestaneo extends Module
         if (!Db::getInstance()->execute($sql))
             $return = false;
 
+        $sql = 'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'mapping_attribute_values` (`champ_akeneo`,`champ_prestashop`, `required`) VALUES
+            ("code","code", 1),
+            ("attribute","attribute_group", 1),
+            ("label", "name", 1);';
+        if (!Db::getInstance()->execute($sql))
+            $return = false;
+
         $sql = 'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'mapping_features` (`champ_akeneo`,`champ_prestashop`, `required`) VALUES
             ("code","code", 1),
-            ("label","name", 1);';
+            ("label","name", 1),
+            ("type","type", 1);;';
         if (!Db::getInstance()->execute($sql))
             $return = false;
 
@@ -423,30 +444,12 @@ class Prestaneo extends Module
 			("enabled","active", 1),
 			("name","name", 1),
 			("price","price", 1),
-			("weight","weight", 1),
+			("weight","weight", 0),
 			("description","description", 1),
-			("image1","image", 1),
 			("groups","groups", 1),
-			("quantity","quantity", 0),
-			("id_tax_rules_group","id_tax_rules_group", 0),
-			("wholesale_price","wholesale_price", 0),
-			("ean13","ean13", 0),
-			("upc","upc", 0),
-			("ecotax","ecotax", 0),
-			("width","width", 0),
-			("height","height", 0),
-			("depth","depth", 0),
-			("visibility","visibility", 0),
-			("description_short","description_short", 0),
-			("meta_title","meta_title", 0),
-			("meta_keywords","meta_keywords", 0),
-			("meta_description","meta_description", 0),
-			("available_now","available_now", 0),
-			("available_later","available_later", 0),
-			("available_for_order","available_for_order", 0),
-			("available_date","available_date", 0),
-			("show_price","show_price", 0),
-			("online_only","online_only", 0);';
+			("picture","image", 0),
+			("short_description","description_short", 0),
+			("available","available_for_order", 1);';
         if (!Db::getInstance()->execute($sql))
             $return = false;
 
@@ -456,26 +459,34 @@ class Prestaneo extends Module
     protected function _installConfigurationKeys()
     {
         $return = true;
-        if (!Configuration::updateValue('PS_IMPORT_ENCLOSURE', '"'))
+        if (!Configuration::updateValue(MOD_SYNC_NAME . '_ipallowed',                                '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftphost',                               '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftplogin',                              '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftppassword',                           '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftppath',                               '/')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_dayshistoryfiles',                      '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_cache',                                 '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE',                      '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_DELIMITER',                      ';')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH',               '/product')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH',              '/category')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH',             '/attribute')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH',      '/option')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH',               '/variant')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT',            999)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES',                 1)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES',                   1)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS',             1)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_CATEGORY_SPECIAL_FIELDS',       'code,code_parent')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_PRODUCT_SPECIAL_FIELDS',        'groups,categories,image')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_ATTRIBUTEGROUP_SPECIAL_FIELDS', 'code,type')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_FEATURE_SPECIAL_FIELDS',        'code,type')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_ATTRIBUTE_SPECIAL_FIELDS',      'code,attribute_group,name')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_FEATUREVALUE_SPECIAL_FIELDS',   'code,attribute_group,name')
+        ) {
             $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_DELIMITER', ';'))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_PRODUCTFTPPATH', ''))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_CATEGORYFTPPATH', ''))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_ATTRIBUTEFTPPATH', ''))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_VARIANTFTPPATH', ''))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_DEFAULTQTYPRODUCT', 999))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_RESETFEATURES', 1))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_RESETIMAGES', 1))
-            $return = false;
-        if (!Configuration::updateValue('PS_IMPORT_RESETCOMBINATIONS', 1))
-            $return = false;
+        }
+
         return $return;
     }
 
@@ -622,10 +633,6 @@ class Prestaneo extends Module
         if (!Db::getInstance()->Execute($sql))
             return false;
 
-        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_categories` AUTO_INCREMENT = 1';
-        if (!Db::getInstance()->Execute($sql))
-            return false;
-
         $sql = '
             CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_code_categories` (
                 `id_category` int(11) NOT NULL,
@@ -633,10 +640,6 @@ class Prestaneo extends Module
                 PRIMARY KEY (`id_category`)
             )ENGINE = InnoDB DEFAULT CHARSET=utf8;
         ';
-        if (!Db::getInstance()->Execute($sql))
-            return false;
-
-        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_code_categories` AUTO_INCREMENT = 1';
         if (!Db::getInstance()->Execute($sql))
             return false;
 
@@ -652,21 +655,14 @@ class Prestaneo extends Module
         if (!Db::getInstance()->Execute($sql))
             return false;
 
-        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_features` AUTO_INCREMENT = 1';
-        if (!Db::getInstance()->Execute($sql))
-            return false;
-
         $sql = '
             CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_code_features` (
                 `id_feature` int(11) NOT NULL,
                 `code` varchar(255),
+                `type` varchar(255),
                 PRIMARY KEY (`id_feature`)
             )ENGINE = InnoDB DEFAULT CHARSET=utf8;
         ';
-        if (!Db::getInstance()->Execute($sql))
-            return false;
-
-        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_code_features` AUTO_INCREMENT = 1';
         if (!Db::getInstance()->Execute($sql))
             return false;
 
@@ -682,10 +678,6 @@ class Prestaneo extends Module
         if (!Db::getInstance()->Execute($sql))
             return false;
 
-        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_attributes` AUTO_INCREMENT = 1';
-        if (!Db::getInstance()->Execute($sql))
-            return false;
-
         $sql = '
             CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_tmp_attributes` (
                 `id_mapping` int(11) NOT NULL AUTO_INCREMENT,
@@ -694,10 +686,6 @@ class Prestaneo extends Module
                 PRIMARY KEY (`id_mapping`)
             )ENGINE = InnoDB DEFAULT CHARSET=utf8;
         ';
-        if (!Db::getInstance()->Execute($sql))
-            return false;
-
-        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_tmp_attributes` AUTO_INCREMENT = 1';
         if (!Db::getInstance()->Execute($sql))
             return false;
 
@@ -711,7 +699,37 @@ class Prestaneo extends Module
         if (!Db::getInstance()->Execute($sql))
             return false;
 
-        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_code_attributes` AUTO_INCREMENT = 1';
+        $sql = '
+            CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_attribute_values` (
+                `id_mapping` int(11) NOT NULL AUTO_INCREMENT,
+                `champ_akeneo` varchar(255),
+                `champ_prestashop` varchar(255),
+                `required` bool,
+                PRIMARY KEY (`id_mapping`)
+            )ENGINE = InnoDB DEFAULT CHARSET=utf8;
+        ';
+        if (!Db::getInstance()->Execute($sql))
+            return false;
+
+        $sql = '
+            CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_code_attribute_values` (
+                `id_attribute_value` int(11) NOT NULL,
+                `code_attribute_group` varchar(255),
+                `code` varchar(255),
+                PRIMARY KEY (`id_attribute_value`)
+            )ENGINE = InnoDB DEFAULT CHARSET=utf8;
+        ';
+        if (!Db::getInstance()->Execute($sql))
+            return false;
+
+        $sql = '
+            CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_code_feature_values` (
+                `id_feature_value` int(11) NOT NULL,
+                `code_feature` varchar(255),
+                `code` varchar(255),
+                PRIMARY KEY (`id_feature_value`)
+            )ENGINE = InnoDB DEFAULT CHARSET=utf8;
+        ';
         if (!Db::getInstance()->Execute($sql))
             return false;
 
@@ -727,10 +745,6 @@ class Prestaneo extends Module
         if (!Db::getInstance()->Execute($sql))
             return false;
 
-        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_products` AUTO_INCREMENT = 1';
-        if (!Db::getInstance()->Execute($sql))
-            return false;
-
         $sql = '
             CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_products_groups` (
                 `id_mapping` int(11) NOT NULL AUTO_INCREMENT,
@@ -739,10 +753,6 @@ class Prestaneo extends Module
                 PRIMARY KEY (`id_mapping`)
             )ENGINE = InnoDB DEFAULT CHARSET=utf8;
         ';
-        if (!Db::getInstance()->Execute($sql))
-            return false;
-
-        $sql = 'ALTER TABLE `' . _DB_PREFIX_ . 'mapping_products_groups` AUTO_INCREMENT = 1';
         if (!Db::getInstance()->Execute($sql))
             return false;
 
@@ -807,6 +817,9 @@ class Prestaneo extends Module
             `'._DB_PREFIX_.'mapping_attributes`,
             `'._DB_PREFIX_.'mapping_tmp_attributes`,
             `'._DB_PREFIX_.'mapping_code_attributes`,
+            `'._DB_PREFIX_.'mapping_attribute_values`,
+            `'._DB_PREFIX_.'mapping_code_attribute_values`,
+            `'._DB_PREFIX_.'mapping_code_feature_values`,
             `'._DB_PREFIX_.'mapping_products`,
             `'._DB_PREFIX_.'mapping_products_groups`;
         ';
@@ -840,22 +853,27 @@ class Prestaneo extends Module
     }
 
     protected function _uninstallConfigurationKeys() {
-        if (!Configuration::deleteByName(MOD_SYNC_NAME.'_ipallowed')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_ftphost')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_ftplogin')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_ftppassword')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_dayshistoryfiles')
-            || !Configuration::deleteByName(MOD_SYNC_NAME.'_cache')
-            || !Configuration::deleteByName('PS_IMPORT_ENCLOSURE')
-            || !Configuration::deleteByName('PS_IMPORT_DELIMITER')
-            || !Configuration::deleteByName('PS_IMPORT_PRODUCTFTPPATH')
-            || !Configuration::deleteByName('PS_IMPORT_CATEGORYFTPPATH')
-            || !Configuration::deleteByName('PS_IMPORT_ATTRIBUTEFTPPATH')
-            || !Configuration::deleteByName('PS_IMPORT_VARIANTFTPPATH')
-            || !Configuration::deleteByName('PS_IMPORT_DEFAULTQTYPRODUCT')
-            || !Configuration::deleteByName('PS_IMPORT_RESETFEATURES')
-            || !Configuration::deleteByName('PS_IMPORT_RESETIMAGES')
-            || !Configuration::deleteByName('PS_IMPORT_RESETCOMBINATIONS')
+        if (!Configuration::deleteByName(MOD_SYNC_NAME . '_ipallowed')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_ftphost')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_ftplogin')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_ftppassword')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_ftppath')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_dayshistoryfiles')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_cache')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_DELIMITER')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_CATEGORY_SPECIAL_FIELDS')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_PRODUCT_SPECIAL_FIELDS')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_ATTRIBUTE_GROUP_SPECIAL_FIELDS')
         )
             return false;
 
@@ -1027,24 +1045,25 @@ class Prestaneo extends Module
         }
 
         $configurationValues=array(
-            MOD_SYNC_NAME.'_ipallowed'        => MOD_SYNC_NAME.'_ipallowed',
-            MOD_SYNC_NAME.'_dayshistoryfiles' => MOD_SYNC_NAME.'_dayshistoryfiles',
-            MOD_SYNC_NAME.'_ftphost'          => MOD_SYNC_NAME.'_ftphost',
-            MOD_SYNC_NAME.'_ftpport'          => MOD_SYNC_NAME.'_ftpport',
-            MOD_SYNC_NAME.'_ftppath'          => MOD_SYNC_NAME.'_ftppath',
-            MOD_SYNC_NAME.'_ftplogin'         => MOD_SYNC_NAME.'_ftplogin',
-            MOD_SYNC_NAME.'_ftppassword'      => MOD_SYNC_NAME.'_ftppassword',
-            MOD_SYNC_NAME.'_cache'            => MOD_SYNC_NAME.'_cache',
-            'PS_IMPORT_ENCLOSURE'             => 'enclosure',
-            'PS_IMPORT_DELIMITER'             => 'delimiter',
-            'PS_IMPORT_PRODUCTFTPPATH'        => 'productftppath',
-            'PS_IMPORT_CATEGORYFTPPATH'       => 'categoryftppath',
-            'PS_IMPORT_ATTRIBUTEFTPPATH'      => 'attributeftppath',
-            'PS_IMPORT_VARIANTFTPPATH'        => 'variantftppath',
-            'PS_IMPORT_RESETCOMBINATIONS'     => 'resetcombinations',
-            'PS_IMPORT_RESETIMAGES'           => 'resetimages',
-            'PS_IMPORT_RESETFEATURES'         => 'resetfeatures',
-            'PS_IMPORT_DEFAULTQTYPRODUCT'     => 'defaultqtyproduct',
+            MOD_SYNC_NAME . '_ipallowed'                        => MOD_SYNC_NAME.'_ipallowed',
+            MOD_SYNC_NAME . '_dayshistoryfiles'                 => MOD_SYNC_NAME.'_dayshistoryfiles',
+            MOD_SYNC_NAME . '_ftphost'                          => MOD_SYNC_NAME.'_ftphost',
+            MOD_SYNC_NAME . '_ftpport'                          => MOD_SYNC_NAME.'_ftpport',
+            MOD_SYNC_NAME . '_ftppath'                          => MOD_SYNC_NAME.'_ftppath',
+            MOD_SYNC_NAME . '_ftplogin'                         => MOD_SYNC_NAME.'_ftplogin',
+            MOD_SYNC_NAME . '_ftppassword'                      => MOD_SYNC_NAME.'_ftppassword',
+            MOD_SYNC_NAME . '_cache'                            => MOD_SYNC_NAME.'_cache',
+            MOD_SYNC_NAME . '_IMPORT_ENCLOSURE'                 => 'enclosure',
+            MOD_SYNC_NAME . '_IMPORT_DELIMITER'                 => 'delimiter',
+            MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH'          => 'productftppath',
+            MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH'         => 'categoryftppath',
+            MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH'        => 'attributeftppath',
+            MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH' => 'attributevaluesftppath',
+            MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH'          => 'variantftppath',
+            MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS'        => 'resetcombinations',
+            MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES'              => 'resetimages',
+            MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES'            => 'resetfeatures',
+            MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT'       => 'defaultqtyproduct',
         );
         foreach($configurationValues as $configurationName => $formName)
         {
@@ -1075,19 +1094,24 @@ class Prestaneo extends Module
                 $this->launchAction($launch);
 
         $this->context->smarty->assign('form_errors', $this->_errors);
-        $output .= $this->renderView();
 
-        $output .= $this->renderForm();
-        $output .= $this->renderTimeLineForm();
+        if (Tools::getValue('controller') == 'AdminModules') {
+            $this->smarty->assign('selfLink', $this->getSelfLink());
 
-        if(MOD_FTP)
-        {
-            $output .= $this->renderFormFtp();
+            $output .= $this->renderView();
+
+            $output .= $this->renderForm();
+            $output .= $this->renderTimeLineForm();
+
+            if(MOD_FTP)
+            {
+                $output .= $this->renderFormFtp();
+            }
+
+            $output .= $this->renderFormConfiguration();
+
+            $output = Overrider::getInstance()->getContent($output);
         }
-
-        $output .= $this->renderFormConfiguration();
-
-        $output = Overrider::getInstance()->getContent($output);
 
         return $output;
     }
@@ -1280,7 +1304,7 @@ class Prestaneo extends Module
             $smartyVariables = array_merge($smartyVariables, array(
                     'form_cron_create'  => $this->renderFormCron(),
                     'mod_cron_enabled'  => MOD_CRON,
-                    'title_cron_list'    => $this->l('Cron List')
+                    'title_cron_list'   => $this->l('Cron List')
                 )
             );
             $this->context->controller->addJS($this->getPathUri() . 'js/sync.js');
@@ -1344,12 +1368,10 @@ class Prestaneo extends Module
         $this->fields_form     = array();
         $helper->identifier    = $this->identifier;
         $helper->submit_action = 'submitDefaultCountry';
-        $helper->token         = Tools::getAdminTokenLite('AdminModules');
         $helper->default_form_language = $lang->id;
         $helper->allow_employee_form_lang =
             Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') ? Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') : 0;
-        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false)
-            .'&configure='.$this->name.'&tab_module='.$this->tab.'&module_name='.$this->name;
+        $helper->currentIndex = $this->getSelfLink();
         $helper->fields_value = array(
             MOD_SYNC_NAME.'_ipallowed'        => Configuration::get(MOD_SYNC_NAME.'_ipallowed'),
             MOD_SYNC_NAME.'_dayshistoryfiles' => Configuration::get(MOD_SYNC_NAME.'_dayshistoryfiles'),
@@ -1369,13 +1391,10 @@ class Prestaneo extends Module
         $helper->default_form_language    = $this->context->language->id;
         $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG', 0);
         $helper->submit_action            = "submitNewCronJob";
-        $helper->currentIndex             = $this->context->link->getAdminLink('AdminModules', false)
-            .'&configure='.$this->name.'&tab_module='.$this->tab.'&module_name='.$this->name;
+        $helper->currentIndex = $this->getSelfLink();
 
         if ($update == true)
             $helper->currentIndex .= '&id_cronjob='.(int)Tools::getValue('id_cronjob');
-
-        $helper->token         = Tools::getAdminTokenLite('AdminModules');
 
         $helper->tpl_vars      = array(
             'fields_value' => array_merge(
@@ -1474,6 +1493,13 @@ class Prestaneo extends Module
                     ),
                     array(
                         'type'  => 'text',
+                        'label' => $this->l('Path to attribute values files'),
+                        'name'  => 'attributevaluesftppath',
+                        'class' => 'mw',
+                        'hint'  => $this->l('Relative to the server root path')
+                    ),
+                    array(
+                        'type'  => 'text',
                         'label' => $this->l('Path to variant files'),
                         'name'  => 'variantftppath',
                         'class' => 'mw',
@@ -1494,22 +1520,21 @@ class Prestaneo extends Module
         $this->fields_form             = array();
         $helper->identifier            = $this->identifier;
         $helper->submit_action         = 'submitDefaultCountry';
-        $helper->token                 = Tools::getAdminTokenLite('AdminModules');
         $helper->allow_employee_form_lang =
             Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') ? Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') : 0;
-        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false)
-            .'&configure='.$this->name.'&tab_module='.$this->tab.'&module_name='.$this->name;
+        $helper->currentIndex = $this->getSelfLink();
         $helper->tpl_vars = array(
             'fields_value' => array(
-                MOD_SYNC_NAME.'_ftppassword' => Configuration::get(MOD_SYNC_NAME.'_ftppassword'),
-                MOD_SYNC_NAME.'_ftplogin'    => Configuration::get(MOD_SYNC_NAME.'_ftplogin'),
-                MOD_SYNC_NAME.'_ftphost'     => Configuration::get(MOD_SYNC_NAME.'_ftphost'),
-                MOD_SYNC_NAME.'_ftpport'     => Configuration::get(MOD_SYNC_NAME.'_ftpport'),
-                MOD_SYNC_NAME.'_ftppath'     => Configuration::get(MOD_SYNC_NAME.'_ftppath'),
-                'productftppath'             => Configuration::get('PS_IMPORT_PRODUCTFTPPATH'),
-                'categoryftppath'            => Configuration::get('PS_IMPORT_CATEGORYFTPPATH'),
-                'attributeftppath'           => Configuration::get('PS_IMPORT_ATTRIBUTEFTPPATH'),
-                'variantftppath'             => Configuration::get('PS_IMPORT_VARIANTFTPPATH'),
+                MOD_SYNC_NAME.'_ftppassword' => Configuration::get(MOD_SYNC_NAME . '_ftppassword'),
+                MOD_SYNC_NAME.'_ftplogin'    => Configuration::get(MOD_SYNC_NAME . '_ftplogin'),
+                MOD_SYNC_NAME.'_ftphost'     => Configuration::get(MOD_SYNC_NAME . '_ftphost'),
+                MOD_SYNC_NAME.'_ftpport'     => Configuration::get(MOD_SYNC_NAME . '_ftpport'),
+                MOD_SYNC_NAME.'_ftppath'     => Configuration::get(MOD_SYNC_NAME . '_ftppath'),
+                'productftppath'             => Configuration::get(MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH'),
+                'categoryftppath'            => Configuration::get(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH'),
+                'attributeftppath'           => Configuration::get(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH'),
+                'attributevaluesftppath'     => Configuration::get(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH'),
+                'variantftppath'             => Configuration::get(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH'),
             ),
         );
 
@@ -1565,9 +1590,7 @@ class Prestaneo extends Module
         $this->fields_form                = array();
         $helper->identifier               = $this->identifier;
         $helper->submit_action            = 'submitModule';
-        $helper->currentIndex             = $this->context->link->getAdminLink('AdminModules', false)
-            .'&configure='.$this->name.'&tab_module='.$this->tab.'&module_name='.$this->name;
-        $helper->token                    = Tools::getAdminTokenLite('AdminModules');
+        $helper->currentIndex             = $this->getSelfLink();
         $helper->tpl_vars = array(
             'fields_value' => array(
                 'status'   => Tools::getValue('status', Configuration::get(MOD_SYNC_NAME.'_SHOW_STATUS'))
@@ -1652,136 +1675,96 @@ class Prestaneo extends Module
     }
 
     /**
-     * Gets the list of the fields of a class for product mapping
+     * Gets the list of the fields of one or many classes for mapping
      *
-     * @param string $class
-     * @return array|bool
+     * @param string|array $classes
+     * @return array
      */
-    protected function _getLstOptions($class)
+    protected function _getLstOptions($classes)
     {
-        if (empty($class))
-            return false;
+        $fieldList = array(
+            'default' => array(
+                'label' => 'Default',
+                'input' => array()
+            ),
+            'lang'    => array(
+                'label' => 'Lang',
+                'input' => array()
+            ),
+            'special' => array(
+                'label' => $this->l('Special fields'),
+                'input' => array()
+            )
+        );
 
-        $listFields = array();
-
-        switch ($class) {
-            case 'Category':
-                $listFields = array(
-                    'default' => array(
-                        'label' => 'Default',
-                        'input' => array(
-                            'id_category'      => array('field' => 'id_category'),
-                            'active'           => array('field' => 'active'),
-                            'id_parent'        => array('field' => 'id_parent'),
-                            'is_root_category' => array('field' => 'is_root_category'),
-                            'id_shop_default'  => array('field' => 'id_shop_default'),
-                        )
-                    ),
-                    'lang' => array(
-                        'label' => 'Lang',
-                        'input' => array(
-                            'name'             => array('field' => 'name'),
-                            'description'      => array('field' => 'description'),
-                            'meta_title'       => array('field' => 'meta_title'),
-                            'meta_keywords'    => array('field' => 'meta_keywords'),
-                            'meta_description' => array('field' => 'meta_description'),
-                            'link_rewrite'     => array('field' => 'link_rewrite'),
-                        )
-                    )
-                );
-                break;
-            case 'Feature':
-                $listFields = array(
-                    'default' => array(
-                        'label' => 'Default',
-                        'input' => array(
-                            'code' => array('field' => 'code')
-                        )
-                    ),
-                    'lang' => array(
-                        'label' => 'Lang',
-                        'input' => array(
-                            'name' => array('field' => 'name')
-                        )
-                    )
-                );
-                break;
-            case 'Attribute':
-                $listFields = array(
-                    'default' => array(
-                        'label' => 'Default',
-                        'input' => array(
-                            'code' => array('field' => 'code')
-                        )
-                    ),
-                    'lang' => array(
-                        'label' => 'Lang',
-                        'input' => array(
-                            'axis' => array('field' => 'axis')
-                        )
-                    )
-                );
-                break;
-            case 'Product':
-                $listFields = array(
-                    'default' => array(
-                        'label' => 'Default',
-                        'input' => array(
-                            'id_product'          => array('field' => 'id_product'),
-                            'active'              => array('field' => 'active'),
-                            'price'               => array('field' => 'price'),
-                            'quantity'            => array('field' => 'quantity'),
-                            'id_tax_rules_group'  => array('field' => 'id_tax_rules_group'),
-                            'wholesale_price'     => array('field' => 'wholesale_price'),
-                            'reference'           => array('field' => 'reference'),
-                            'ean13'               => array('field' => 'ean13'),
-                            'upc'                 => array('field' => 'upc'),
-                            'ecotax'              => array('field' => 'ecotax'),
-                            'width'               => array('field' => 'width'),
-                            'height'              => array('field' => 'height'),
-                            'depth'               => array('field' => 'depth'),
-                            'weight'              => array('field' => 'weight'),
-                            'visibility'          => array('field' => 'visibility'),
-                            'available_for_order' => array('field' => 'available_for_order'),
-                            'available_date'      => array('field' => 'available_date'),
-                            'show_price'          => array('field' => 'show_price'),
-                            'image'               => array('field' => 'image'),
-                            'online_only'         => array('field' => 'online_only'),
-                            'id_shop_default'     => array('field' => 'id_shop_default'),
-                        )
-                    ),
-                    'other' => array(
-                        'label' => 'Other',
-                        'input' => array(
-                            'groups'     => array(
-                                'field' => 'groups',
-                                'title' => 'Déclinaisons'
-                            ),
-                            'categories' => array(
-                                'field' => 'categories',
-                                'title' => 'Categories ( = Catégories Akeneo )'
-                            ),
-                        )
-                    ),
-                    'lang' => array(
-                        'label' => 'Lang',
-                        'input' => array(
-                            'meta_title'        => array('field' => 'meta_title'),
-                            'meta_keywords'     => array('field' => 'meta_keywords'),
-                            'meta_description'  => array('field' => 'meta_description'),
-                            'link_rewrite'      => array('field' => 'link_rewrite'),
-                            'name'              => array('field' => 'name'),
-                            'description'       => array('field' => 'description'),
-                            'description_short' => array('field' => 'description_short'),
-                            'available_now'     => array('field' => 'available_now'),
-                            'available_later'   => array('field' => 'available_later'),
-                        )
-                    )
-                );
-                break;
+        if (!is_array($classes)) {
+            $classes = array($classes);
         }
 
-        return $listFields;
+        $isFirst = true;
+        $fields = array();
+        foreach ($classes as $class) {
+            $className = ucfirst($class);
+            $reflection = new ReflectionClass($className);
+
+            if (!$reflection->hasProperty('definition')) {
+                return false;
+            }
+
+            $definition = $reflection->getStaticPropertyValue('definition');
+
+            if ($isFirst) {
+                $isFirst = false;
+                $fields = $definition['fields'];
+            } else {
+                $fields = array_intersect_assoc($fields, $definition['fields']);
+            }
+        }
+
+        foreach ($fields as $fieldName => $field) {
+            if (
+                strncmp($fieldName, 'id_', 3) == 0
+                || strncmp($fieldName, 'fk_', 3) == 0
+            ) {
+                continue;
+            }
+            if (isset($field['lang']) && $field['lang']) {
+                $type = 'lang';
+            } else {
+                $type = 'default';
+            }
+
+            $fieldList[$type]['input'][$fieldName] = array('field' => $fieldName);
+        }
+
+        $isFirst = true;
+        $specialFields = array();
+
+        foreach ($classes as $class) {
+            $specialName   = MOD_SYNC_NAME . '_MAPPING_' . strtoupper($class) . '_SPECIAL_FIELDS';
+            $classSpecialFields = preg_split('#,#', Configuration::get($specialName), -1, PREG_SPLIT_NO_EMPTY);
+
+            if ($isFirst) {
+                $specialFields = $classSpecialFields;
+            } else {
+                $specialFields = array_intersect($specialFields, $classSpecialFields);
+            }
+        }
+
+        foreach ($specialFields as $specialField) {
+            $fieldList['special']['input'][$specialField] = array('field' => $specialField);
+        }
+
+        //Reordering fields and removing empty groups for better readability
+        foreach ($fieldList as $fieldType => &$fields) {
+            if (empty($fields['input'])) {
+                unset($fieldList[$fieldType]);
+            } else {
+                ksort($fields['input']);
+            }
+        }
+
+        return $fieldList;
     }
 
     /**
@@ -1910,14 +1893,13 @@ class Prestaneo extends Module
         $this->fields_form                = array();
         $helper->identifier               = $this->identifier;
         $helper->submit_action            = 'submitSettingsProductsImport';
-        $helper->currentIndex             = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
-        $helper->token                    = Tools::getAdminTokenLite('AdminModules');
+        $helper->currentIndex             = $this->getSelfLink();
         $helper->tpl_vars                 = array(
             'fields_value' => array(
-                'defaultqtyproduct' => Configuration::get('PS_IMPORT_DEFAULTQTYPRODUCT'),
-                'resetcombinations' => Configuration::get('PS_IMPORT_RESETCOMBINATIONS'),
-                'resetimages'       => Configuration::get('PS_IMPORT_RESETIMAGES'),
-                'resetfeatures'     => Configuration::get('PS_IMPORT_RESETFEATURES'),
+                'defaultqtyproduct' => Configuration::get(MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT'),
+                'resetcombinations' => Configuration::get(MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS'),
+                'resetimages'       => Configuration::get(MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES'),
+                'resetfeatures'     => Configuration::get(MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES'),
             ),
             'languages'    => $this->context->controller->getLanguages(),
             'id_language'  => $this->context->language->id
@@ -1961,12 +1943,11 @@ class Prestaneo extends Module
         $this->fields_form                = array();
         $helper->identifier               = $this->identifier;
         $helper->submit_action            = 'submitSettings';
-        $helper->currentIndex             = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
-        $helper->token                    = Tools::getAdminTokenLite('AdminModules');
+        $helper->currentIndex             = $this->getSelfLink();
         $helper->tpl_vars                 = array(
             'fields_value' => array(
-                'enclosure' => Configuration::get('PS_IMPORT_ENCLOSURE'),
-                'delimiter' => Configuration::get('PS_IMPORT_DELIMITER')
+                'enclosure' => Configuration::get(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE'),
+                'delimiter' => Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER')
             ),
             'languages'    => $this->context->controller->getLanguages(),
             'id_language'  => $this->context->language->id
@@ -1994,10 +1975,10 @@ class Prestaneo extends Module
         $this->context->smarty->assign(array(
             'mod_name'                   => MOD_SYNC_NAME,
             'categoryPrestashopFields'   => $this->_getLstOptions('Category'),
-            'featurePrestashopFields'    => $this->_getLstOptions('Feature'),
-            'attributePrestashopFields'  => $this->_getLstOptions('Attribute'),
+            'featurePrestashopFields'    => $this->_getLstOptions(array('AttributeGroup', 'Feature')),
+            'attributePrestashopFields'  => $this->_getLstOptions('MappingTmpAttributes'),
             'productPrestashopFields'    => $this->_getLstOptions('Product'),
-            'categoryMinRequiredFields'  => array('id_category', 'id_parent', 'name'),
+            'categoryMinRequiredFields'  => array('code', 'id_parent', 'name'),
             'featureMinRequiredFields'   => array('code', 'name'),
             'attributeMinRequiredFields' => array('code', 'axis'),
             'productMinRequiredFields'   => array('reference', 'name', 'price'),
@@ -2010,6 +1991,81 @@ class Prestaneo extends Module
         ));
 
         return $this->display(__FILE__, 'configuration.tpl');
+    }
+
+    public function hookActionCategoryDelete($params)
+    {
+        $children = array();
+        foreach ($params['deleted_children'] as $child) {
+            $children[] = $child->id;
+        }
+
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_code_categories`
+            WHERE `id_category` IN (' . join(', ', $children) . ')';
+        Db::getInstance()->execute($sql);
+    }
+
+    public function hookActionAttributeGroupDelete($params)
+    {
+        $attributeGroupName = MappingCodeAttributes::getCodeById($params['id_attribute_group']);
+
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_code_attribute_values`
+            WHERE `code_attribute_group` = "' . pSQL($attributeGroupName) . '"';
+        Db::getInstance()->execute($sql);
+
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_code_attributes`
+            WHERE `id_attribute_group` = ' . pSQL($params['id_attribute_group']);
+        Db::getInstance()->execute($sql);
+    }
+
+    public function hookActionAttributeDelete($params)
+    {
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_code_attribute_values`
+            WHERE `id_attribute_value` = ' . pSQL($params['id_attribute']);
+        Db::getInstance()->execute($sql);
+    }
+
+    public function hookActionFeatureDelete($params)
+    {
+        $featureName = MappingCodeFeatures::getCodeById($params['id_feature']);
+
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_code_feature_values`
+            WHERE `code_feature` = "' . pSQL($featureName) . '"';
+        Db::getInstance()->execute($sql);
+
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_code_features`
+            WHERE `id_feature` = ' . pSQL($params['id_feature']);
+        Db::getInstance()->execute($sql);
+    }
+
+    public function hookActionFeatureValueDelete($params)
+    {
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_code_feature_values`
+            WHERE `id_feature_value` = ' . pSQL($params['id_feature_value']);
+        Db::getInstance()->execute($sql);
+    }
+
+    public function hookActionProductDelete($params)
+    {
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_products_groups`
+            WHERE `id_product` = ' . pSQL($params['id_product']);
+        Db::getInstance()->execute($sql);
+    }
+
+    /**
+     * @return string
+     */
+    public static function getSelfLink()
+    {
+        return self::$_selfLink;
+    }
+
+    /**
+     * @param string $selfLink
+     */
+    public static function setSelfLink($selfLink)
+    {
+        self::$_selfLink = $selfLink;
     }
 }
 

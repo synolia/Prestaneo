@@ -13,20 +13,34 @@ class ImportVariant extends ImportAbstract
      */
     public function process()
     {
-        $delimiter = Configuration::get('PS_IMPORT_DELIMITER') ? Configuration::get('PS_IMPORT_DELIMITER') : ';';
+        $delimiter = Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') : ';';
 
-        $fileTransferHost = Configuration::get(MOD_SYNC_NAME.'_ftphost');
-        if(!empty($fileTransferHost)) {
-            $fileTransfer = $this->_getFtpConnection();
+        $folderUtil = Utils::exec('folder');
+        $path       = $this->_manager->getPath() . '/files/';
 
-            $fileTransfer->getFiles(Configuration::get('PS_IMPORT_VARIANTFTPPATH'), $this->_manager->getPath().'/files/', '*.csv');
+        if ($folderUtil->isFolderEmpty($path)) {
+            $fileTransferHost = Configuration::get(MOD_SYNC_NAME . '_ftphost');
+            if (!empty($fileTransferHost)) {
+                if (_PS_MODE_DEV_) {
+                    $this->log('Fetching files from FTP');
+                }
+                $fileTransfer = $this->_getFtpConnection();
+
+                if (!$fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH'), $path, '*.csv')) {
+                    $this->logError('There was an error while retrieving the files from the FTP');
+                    $folderUtil->delTree($path, false);
+                    return false;
+                }
+            }
         }
-        $reader    = new CsvReader($this->_manager, $delimiter);
-        $dataLines = $reader->getData();
+
+        $reader      = new CsvReader($this->_manager, $delimiter);
+        $dataLines   = $reader->getData();
+        $currentFile = $reader->getCurrentFileName(0);
 
         if (!is_array($dataLines) || empty($dataLines)){
-            ('Nothing to import or file is not valid CSV');
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->logError('Nothing to import or file is not valid CSV');
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
@@ -36,7 +50,7 @@ class ImportVariant extends ImportAbstract
 
         if (!empty($missingFields)) {
             ('Missing required fields : ' . implode(', ', $missingFields));
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
@@ -44,19 +58,19 @@ class ImportVariant extends ImportAbstract
 
         $this->_offsets = array_flip($headers);
 
-        $this->_mapOffsets(MappingAttributes::getAllPrestashopFields());
+        $this->_mapOffsets('MappingTmpAttributes', MappingAttributes::getAllPrestashopFields());
 
-        $currentFile    = $reader->getCurrentFileName(0);
+        $errorCount     = 0;
         $lastErrorCount = 0;
 
         foreach ($dataLines as $line => $data) {
             $nextFile = $reader->getCurrentFileName($line);
             if ($nextFile != $currentFile) {
                 $treatmentResult = 1;
-                if(count($this->_errors) > $lastErrorCount)
+                if($errorCount > $lastErrorCount)
                     $treatmentResult = 0;
                 $this->_mover->finishAction(basename($currentFile), $treatmentResult, 'import');
-                $lastErrorCount = count($this->_errors);
+                $lastErrorCount = $errorCount;
                 $currentFile    = $nextFile;
             }
 
@@ -65,11 +79,12 @@ class ImportVariant extends ImportAbstract
             }
             $data = $this->_cleanDataLine($data);
 
-            $code = $data[$this->_offsets['code']];
-            $axis = $data[$this->_offsets['axis']];
+            $code = $data[$this->_offsets['default']['code']];
+            $axis = $data[$this->_offsets['default']['axis']];
 
             if (empty($code) || empty($axis)) {
-                $this->log('Code and/or axis are empty on line ' . ($line + 2));
+                $this->logError('Code and/or axis are empty on line ' . ($line + 2));
+                $errorCount++;
                 continue;
             }
 
@@ -84,14 +99,15 @@ class ImportVariant extends ImportAbstract
             $mapping->axis = $axis;
 
             if (!$mapping->save()){
-                $this->log('Error while saving : ' . $code . '/' . $axis . ' (line ' . ($line + 2) . ')');
+                $this->logError('Error while saving : ' . $code . '/' . $axis . ' (line ' . ($line + 2) . ')');
+                $errorCount++;
             } elseif (_PS_MODE_DEV_) {
                 $this->log('Variant ' . $code . ' added');
             }
         }
-
-        $this->_mover->finishAction(basename($reader->getCurrentFileName()), true);
-        true;
+        $endStatus = ($errorCount == $lastErrorCount);
+        $this->_mover->finishAction(basename($currentFile), $endStatus);
+        return true;
     }
 
     protected static function _resetMappingTmpAttributes()

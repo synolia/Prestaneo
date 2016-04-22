@@ -4,6 +4,7 @@ class ImportCategory extends ImportAbstract
 {
     public static $icon  = 'sitemap';
     public static $order = 1;
+
     /**
      * Import categories and deactivates old ones
      *
@@ -12,22 +13,35 @@ class ImportCategory extends ImportAbstract
      */
     public function process()
     {
-        $delimiter = Configuration::get('PS_IMPORT_DELIMITER') ? Configuration::get('PS_IMPORT_DELIMITER') : ';';
+        $delimiter = Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') : ';';
 
-        $fileTransferHost = Configuration::get(MOD_SYNC_NAME.'_ftphost');
-        if(!empty($fileTransferHost)) {
-            $fileTransfer = $this->_getFtpConnection();
+        $folderUtil = Utils::exec('folder');
+        $path       = $this->_manager->getPath() . '/files/';
 
-            $fileTransfer->getFiles(Configuration::get('PS_IMPORT_CATEGORYFTPPATH'), $this->_manager->getPath().'/files/', '*.csv');
+        if ($folderUtil->isFolderEmpty($path)) {
+            $fileTransferHost = Configuration::get(MOD_SYNC_NAME . '_ftphost');
+            if (!empty($fileTransferHost)) {
+                if (_PS_MODE_DEV_) {
+                    $this->log('Fetching files from FTP');
+                }
+                $fileTransfer = $this->_getFtpConnection();
+
+                if (!$fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH'), $path, '*.csv')) {
+                    $this->logError('There was an error while retrieving the files from the FTP');
+                    $folderUtil->delTree($path, false);
+                    return false;
+                }
+            }
         }
 
         $reader        = new CsvReader($this->_manager, $delimiter);
         $contextShopId = (int)Context::getContext()->shop->id;
         $dataLines     = $reader->getData();
+        $currentFile   = $reader->getCurrentFileName(0);
 
         if (!is_array($dataLines) || empty($dataLines)){
-            $this->log('Nothing to import or file is not valid CSV');
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->logError('Nothing to import or file is not valid CSV');
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
@@ -36,15 +50,13 @@ class ImportCategory extends ImportAbstract
         $missingFields  = $this->_checkMissingRequiredFields($requiredFields, $headers);
 
         if (!empty($missingFields)) {
-            $this->log('Missing required fields : ' . implode(', ', $missingFields));
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->logError('Missing required fields : ' . implode(', ', $missingFields));
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
-        $this->_offsets = array_flip($headers);
-
         $this->_getLangsInCsv($headers);
-        $this->_mapOffsets(MappingCategories::getAllPrestashopFields());
+        $this->_mapOffsets('Category', MappingCategories::getAllPrestashopFields());
 
         //Cleaning data before any use
         foreach ($dataLines as &$dataLine) {
@@ -58,55 +70,80 @@ class ImportCategory extends ImportAbstract
         }
 
         $oldCategories  = $this->_getCategoriesToDeactivate($dataLines);
-        $currentFile    = $reader->getCurrentFileName(0);
+        $errorCount     = 0;
         $lastErrorCount = 0;
+
+        if (!isset($this->_offsets['default']['id_parent'])) {
+            $this->_offsets['default']['id_parent'] = 'id_parent';
+        }
+
+        if (!isset($this->_offsets['default']['id_shop_default'])) {
+            $this->_offsets['default']['id_shop_default'] = 'id_shop_default';
+        }
+
+        if (!isset($this->_offsets['default']['active'])) {
+            $this->_offsets['default']['active'] = 'active';
+        }
+
+        if (!isset($this->_offsets['default']['is_root_category'])) {
+            $this->_offsets['default']['is_root_category'] = 'is_root_category';
+        }
 
         foreach ($dataLines as $line => $data) {
             $nextFile = $reader->getCurrentFileName($line);
             if ($nextFile != $currentFile) {
                 $treatmentResult = 1;
-                if(count($this->_errors) > $lastErrorCount)
+                if($errorCount > $lastErrorCount)
                     $treatmentResult = 0;
                 $this->_mover->finishAction(basename($currentFile), $treatmentResult, 'import');
-                $lastErrorCount = count($this->_errors);
+                $lastErrorCount = $errorCount;
                 $currentFile    = $nextFile;
             }
 
             if ($data === false) {
                 continue;
             }
-            $codeCategory = $data[$this->_offsets['id_category']];
-            $codeParent   = $data[$this->_offsets['id_parent']];
+
+            $codeCategory = $data[$this->_offsets['special']['code']];
+            $codeParent   = $data[$this->_offsets['special']['code_parent']];
 
             if (empty($codeCategory)) {
-                $this->log("Missing category code on line " . ($line+2));
+                $this->logError("Missing category code on line " . ($line+2));
+                $errorCount++;
                 continue;
             }
 
-            if (empty($codeParent)) {
-                $idParent = Configuration::get('PS_HOME_CATEGORY');
-            } else {
-                $idParent = MappingCodeCategories::getIdByCode($codeParent);
-                if ($idParent === false) {
-                    $this->log('Parent category for ' . $codeCategory . ' does not exists yet (' . $codeParent . ')');
-                    continue;
+            if (
+                empty($data[$this->_offsets['default']['id_parent']])
+                &&  (
+                    !array_key_exists($this->_offsets['default']['is_root_category'], $data)
+                    || !$data[$this->_offsets['default']['is_root_category']]
+                )
+            ) {
+                if (empty($codeParent)) {
+                    $idParent = Configuration::get('PS_HOME_CATEGORY');
+                } else {
+                    $idParent = MappingCodeCategories::getIdByCode($codeParent);
+                    if ($idParent === false) {
+                        $this->logError('Parent category for ' . $codeCategory . ' does not exists yet (' . $codeParent . ')');
+                        $errorCount++;
+                        continue;
+                    }
                 }
+
+                $data[$this->_offsets['default']['id_parent']] = $idParent;
+                $data[$this->_offsets['default']['is_root_category']] = 0;
+            } elseif(!empty($data[$this->_offsets['default']['id_parent']])) {
+                //Forcing to 0 if there is a parent
+                $data[$this->_offsets['default']['is_root_category']] = 0;
             }
 
-            $langName        = array();
-            $langLinkRewrite = array();
+            if (empty($data[$this->_offsets['default']['id_shop_default']])) {
+                $data[$this->_offsets['default']['id_shop_default']] = $contextShopId;
+            }
 
-            foreach ($this->_langs as $id_lang => $iso_code) {
-                $suffixLang = '-' . $this->_labels[$iso_code];
-                $name       = $data[$this->_offsets['name' . $suffixLang]];
-
-                if (empty($name)) {
-                    $langName[$id_lang]        = $codeCategory;
-                    $langLinkRewrite[$id_lang] = Tools::link_rewrite($codeCategory);
-                } else {
-                    $langName[$id_lang]        = $name;
-                    $langLinkRewrite[$id_lang] = Tools::link_rewrite($name);
-                }
+            if (empty($data[$this->_offsets['default']['active']])) {
+                $data[$this->_offsets['default']['active']] = 1;
             }
 
             $idCategory = MappingCodeCategories::getIdByCode($codeCategory);
@@ -114,26 +151,54 @@ class ImportCategory extends ImportAbstract
             if ($idCategory !== false) {
                 $categoryExist = Category::existsInDatabase($idCategory, 'category');
                 if ($categoryExist) {
-                    $objCategory = new Category($idCategory);
+                    $category = new Category($idCategory);
                 }
                 else {
                     //The category does not exist but the mapping does. It will have to be updated
-                    $objCategory = new Category();
+                    $category = new Category();
                 }
             } else {
-                $objCategory = new Category();
+                $category      = new Category();
                 $categoryExist = false;
             }
 
-            $objCategory->id_parent        = $idParent;
-            $objCategory->id_shop_default  = $contextShopId;
-            $objCategory->name             = $langName;
-            $objCategory->link_rewrite     = $langLinkRewrite;
-            $objCategory->active           = 1;
-            $objCategory->is_root_category = 0;
+            foreach ($this->_offsets['lang'] as $field => $offsets) {
+                $values = array();
 
-            if (!$objCategory->save()) {
-                $this->log('Could not save category ' . $codeCategory);
+                foreach ($offsets as $idLang => $offset) {
+                    $values[$idLang] = $data[$offset];
+                }
+
+                if ($field == 'name') {
+                    $links = array();
+                    foreach ($values as $idLang => $value) {
+                        $links[$idLang] = Tools::link_rewrite($value);
+                    }
+                    $category->link_rewrite = $links;
+                }
+
+                $category->{$field} = $values;
+            }
+
+            foreach ($this->_offsets['default'] as $field => $offset) {
+                $category->{$field} = $data[$offset];
+            }
+
+            foreach ($this->_offsets['date'] as $field => $offset) {
+                if (Validate::isDate($data[$offset])) {
+                    $category->{$field} = $data[$offset];
+                } else {
+                    $this->logError('Wrong date format for field ' . $field . ' : ' . $data[$offset] . '(for category ' . $codeCategory . ')');
+                    $errorCount++;
+                }
+            }
+
+            //Forced to true so we only regenerate once everything is over
+            $category->doNotRegenerateNTree = true;
+
+            if (!$category->save()) {
+                $this->logError('Could not save category ' . $codeCategory);
+                $errorCount++;
                 continue;
             }
             else {
@@ -145,36 +210,41 @@ class ImportCategory extends ImportAbstract
                     $mapping = new MappingCodeCategories();
 
                     $mapping->code        = $codeCategory;
-                    $mapping->id_category = $objCategory->id;
+                    $mapping->id_category = $category->id;
 
                     if (!$mapping->add()) {
-                        $this->log('Could not save category mapping for ' . $codeCategory);
+                        $this->logError('Could not save category mapping for ' . $codeCategory);
+                        $errorCount++;
                     } elseif (_PS_MODE_DEV_) {
                         $this->log('Category ' . $codeCategory . ' mapping saved');
                     }
                 }
             }
 
-            if (!$this->_associateShop($objCategory, $contextShopId)) {
-                $this->log('Could not associate category ' . $codeCategory . ' to shop ' . $contextShopId);
+            if (!$this->_associateShop($category, $contextShopId)) {
+                $this->logError('Could not associate category ' . $codeCategory . ' to shop ' . $contextShopId);
+                $errorCount++;
             } elseif (_PS_MODE_DEV_) {
                 $this->log('Category ' . $codeCategory . ' associated to shop ' . $contextShopId);
             }
         }
 
+        $endStatus = ($errorCount == $lastErrorCount);
+        $this->_mover->finishAction(basename($currentFile), $endStatus);
+
         if (!$this->_regeneratePositions($contextShopId)) {
-            $this->log('Could not regenerate categories position for shop ' . $contextShopId);
+            $this->logError('Could not regenerate categories position for shop ' . $contextShopId);
         } elseif (_PS_MODE_DEV_) {
             $this->log('Categories position regenerated for shop ' . $contextShopId);
         }
 
         if (!$this->_deactivateCategoriesById($oldCategories)) {
-            $this->log('Could not deactivate old categories : ' . implode(', ', $oldCategories));
+            $this->logError('Could not deactivate old categories : ' . implode(', ', $oldCategories));
         } elseif (_PS_MODE_DEV_ && !empty($oldCategories)) {
             $this->log('Old categories deactivated (' . implode(',', $oldCategories) . ')');
         }
 
-        $this->_mover->finishAction(basename($reader->getCurrentFileName()), true);
+
         return true;
     }
 
@@ -211,7 +281,7 @@ class ImportCategory extends ImportAbstract
             return false;
 
         $identifiers = array();
-        $idPosition = $this->_offsets['id_category'];
+        $idPosition = $this->_offsets['special']['code'];
 
         foreach ($dataLines as $data) {
             $code = $data[$idPosition];
@@ -246,20 +316,20 @@ class ImportCategory extends ImportAbstract
     /**
      * Associate a category to a shop
      *
-     * @param Category $objCategory
+     * @param Category $category
      * @param int $shopId
      * @return bool
      */
-    protected function _associateShop(Category $objCategory, $shopId)
+    protected function _associateShop(Category $category, $shopId)
     {
-        if (!Validate::isLoadedObject($objCategory))
+        if (!Validate::isLoadedObject($category))
             return false;
 
         if (!$shopId)
             $shopId = (int)Context::getContext()->shop->id;
 
-        if (!$objCategory->existsInShop($shopId)) {
-            return $objCategory->addShop($shopId);
+        if (!$category->existsInShop($shopId)) {
+            return $category->addShop($shopId);
         }
 
         return true;
@@ -354,5 +424,4 @@ class ImportCategory extends ImportAbstract
 
         return $return;
     }
-
 }

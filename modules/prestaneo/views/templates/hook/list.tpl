@@ -16,12 +16,12 @@
                         <div class="col-md-2">
                             <div class="btn-group-action pull-right">
                                 <a class="btn btn-default"
-                                   href="{$link->getAdminLink('AdminModules')}&configure={$mod_sync}{$item.editParameters}">
+                                   href="{$selfLink}{$item.editParameters}">
                                     <i class="icon-edit"></i>
                                     {l s='Edit' mod=$mod_sync}
                                 </a>
                                 <a class="btn btn-default"
-                                   href="{$link->getAdminLink('AdminModules')}&configure={$mod_sync}{$item.deleteParameters}">
+                                   href="{$selfLink}{$item.deleteParameters}">
                                     <i class="icon-trash"></i>
                                     {l s='Delete' mod=$mod_sync}
                                 </a>

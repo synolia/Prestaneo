@@ -21,19 +21,31 @@ class UtilsFolder extends Utils
         closedir($directory);
     }
 
-    public function delTree($dir)
+    public function delTree($dir, $removeRoot = true)
     {
         $files = array_diff(scandir($dir), array('.','..'));
-        foreach ($files as $file)
-        {
-            if(is_dir($dir.'/'.$file))
-                $this->delTree($dir.'/'.$file);
-            else
-                unlink($dir.'/'.$file);
+        $result = true;
+
+        foreach ($files as $file) {
+            if (is_dir($dir . '/' . $file)) {
+                $result &= $this->delTree($dir . '/' . $file, true);
+            } else {
+                $result &= unlink($dir . '/' . $file);
+            }
         }
-        return rmdir($dir);
+        if ($removeRoot) {
+            $result &= rmdir($dir);
+        }
+
+        return $result;
     }
 
+    /**
+     * @param string $rootFolder
+     * @param string $pattern
+     *
+     * @return array
+     */
     public function getAllFilesInFolder($rootFolder, $pattern='*')
     {
         $iterator = new RecursiveIteratorIterator(
@@ -50,6 +62,18 @@ class UtilsFolder extends Utils
             $files[] = $file->getRealPath();
         }
         return $files;
+    }
+
+    /**
+     * @param $folder
+     *
+     * @return bool
+     */
+    public function isFolderEmpty($folder)
+    {
+        $content = scandir($folder);
+
+        return !$content || (count($content) == 2);
     }
 }
 

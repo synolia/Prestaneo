@@ -42,7 +42,7 @@
                                     {l s='Clear dates' mod=$mod_sync_name}
                                 </a>
                             {/if}
-                            <a class="btn btn-default" href="{$link->getAdminLink('AdminSyncImports')}&configure={$mod_sync_name}&launch={$item.name}&type=import{if isset($from)}&from={$from}{/if}{if isset($to)}&to={$to}{/if}">
+                            <a class="btn btn-default" href="{$selfLink}&launch={$item.name}&type=import{if isset($from)}&from={$from}{/if}{if isset($to)}&to={$to}{/if}">
                                 <i class="icon-download"></i>
                                 {l s='Launch' mod=$mod_sync_name}
                             </a>
@@ -55,7 +55,7 @@
                         </div>
                         <div class="form-group col-md-8 pull-right" style="padding-right: 0;" >
                             {assign var='input_name' value="file_import_{$item.name}"}
-                            <form method="post" id="{$input_name}_{$language.id_lang}-form" action="{$link->getAdminLink('AdminModules')}&configure={$mod_sync_name}&post_launch={$item.name}&type=import{if isset($from)}&from={$from}{/if}{if isset($to)}&to={$to}{/if}" enctype="multipart/form-data" class="item-form defaultForm  form-horizontal">
+                            <form method="post" id="{$input_name}_{$language.id_lang}-form" action="{$selfLink}&post_launch={$item.name}&type=import{if isset($from)}&from={$from}{/if}{if isset($to)}&to={$to}{/if}" enctype="multipart/form-data" class="item-form defaultForm  form-horizontal">
                                 <input id="{$input_name}_{$language.id_lang}" type="file" name="{$input_name}_{$language.id_lang}" class="hide" />
                                 <input type="hidden" id="{$input_name}_{$language.id_lang}-lang" name="id_lang" class="hide sync_language" value="{$language.id_lang}"/>
                                 <div class="dummyfile input-group pull-right">

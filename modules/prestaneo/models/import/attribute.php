@@ -6,6 +6,7 @@ class ImportAttribute extends ImportAbstract
 
     public static $icon  = 'copy';
     public static $order = 3;
+
     /**
      * Imports attributes
      *
@@ -14,20 +15,33 @@ class ImportAttribute extends ImportAbstract
      */
     public function process()
     {
-        $delimiter = Configuration::get('PS_IMPORT_DELIMITER') ? Configuration::get('PS_IMPORT_DELIMITER') : ';';
+        $delimiter = Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') : ';';
 
-        $fileTransferHost = Configuration::get(MOD_SYNC_NAME.'_ftphost');
-        if(!empty($fileTransferHost)) {
-            $fileTransfer = $this->_getFtpConnection();
+        $folderUtil = Utils::exec('folder');
+        $path       = $this->_manager->getPath() . '/files/';
 
-            $fileTransfer->getFiles(Configuration::get('PS_IMPORT_ATTRIBUTEFTPPATH'), $this->_manager->getPath().'/files/', '*.csv');
+        if ($folderUtil->isFolderEmpty($path)) {
+            $fileTransferHost = Configuration::get(MOD_SYNC_NAME . '_ftphost');
+            if (!empty($fileTransferHost)) {
+                if (_PS_MODE_DEV_) {
+                    $this->log('Fetching files from FTP');
+                }
+                $fileTransfer = $this->_getFtpConnection();
+
+                if (!$fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH'), $path, '*.csv')) {
+                    $this->logError('There was an error while retrieving the files from the FTP');
+                    $folderUtil->delTree($path, false);
+                    return false;
+                }
+            }
         }
-        $reader    = new CsvReader($this->_manager, $delimiter);
-        $dataLines = $reader->getData();
+        $reader      = new CsvReader($this->_manager, $delimiter);
+        $dataLines   = $reader->getData();
+        $currentFile = $reader->getCurrentFileName(0);
 
         if (!is_array($dataLines) || empty($dataLines)){
-            $this->log('Nothing to import or file is not valid CSV');
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->logError('Nothing to import or file is not valid CSV');
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
@@ -36,35 +50,35 @@ class ImportAttribute extends ImportAbstract
         $missingFields  = $this->_checkMissingRequiredFields($requiredFields, $headers);
 
         if (!empty($missingFields)) {
-            $this->log('Missing required fields : ' . implode(', ', $missingFields));
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+            $this->logError('Missing required fields : ' . implode(', ', $missingFields));
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
         $this->_offsets = array_flip($headers);
 
         $this->_getLangsInCsv($headers);
-        $this->_mapOffsets(MappingFeatures::getAllPrestashopFields());
+        $this->_mapOffsets(array('AttributeGroup', 'Feature'), MappingFeatures::getAllPrestashopFields());
 
-        $arrDistinctAxes = MappingTmpAttributes::getDistinctAxes();
-        if ($arrDistinctAxes === false) {
-            $this->log("There was a problem while retrieving axes");
-            $this->_mover->finishAction(basename($reader->getCurrentFileName()), false);
+        $distinctAxes = MappingTmpAttributes::getDistinctAxes();
+        if ($distinctAxes === false) {
+            $this->logError("There was a problem while retrieving axes");
+            $this->_mover->finishAction(basename($currentFile), false);
             return false;
         }
 
-        $positionCode   = $this->_offsets['code'];
         $currentFile    = $reader->getCurrentFileName(0);
+        $errorCount     = 0;
         $lastErrorCount = 0;
 
         foreach ($dataLines as $line => $data) {
             $nextFile = $reader->getCurrentFileName($line);
             if ($nextFile != $currentFile) {
                 $treatmentResult = 1;
-                if(count($this->_errors) > $lastErrorCount)
+                if($errorCount > $lastErrorCount)
                     $treatmentResult = 0;
                 $this->_mover->finishAction(basename($currentFile), $treatmentResult, 'import');
-                $lastErrorCount = count($this->_errors);
+                $lastErrorCount = $errorCount;
                 $currentFile    = $nextFile;
             }
 
@@ -73,97 +87,77 @@ class ImportAttribute extends ImportAbstract
             }
             $data = $this->_cleanDataLine($data);
 
-            $code = $data[$positionCode];
+            $code = $data[$this->_offsets['special']['code']];
+            $type = $data[$this->_offsets['special']['type']];
 
             if (empty($code)) {
-                $this->log("Missing code on line " . ($line + 2));
+                $this->logError('Missing code on line ' . ($line + 2));
+                continue;
+            }
+
+            //Images have a special treatment as there can be many linked to the same PrestaShop field
+            if ($type == 'pim_catalog_image') {
+                if (!MappingProducts::existCodeAkeneo($code)) {
+                    $mapping = new MappingProducts();
+                    $mapping->champ_akeneo     = $code;
+                    $mapping->champ_prestashop = 'image';
+
+                    if (!$mapping->add()) {
+                        $this->logError('Could not save mapping for image field ' . $code);
+                        $errorCount++;
+                    } elseif (_PS_MODE_DEV_) {
+                        $this->log('New image attribute ' . $code . ' added');
+                    }
+                } elseif (_PS_MODE_DEV_) {
+                    $this->log('Image attribute ' . $code . ' already known');
+                }
                 continue;
             }
 
             if (MappingProducts::existCodeAkeneo($code)) {
                 if (_PS_MODE_DEV_) {
-                    $this->log("PrestaShop native field $code");
+                    $this->log('PrestaShop native field ' . $code);
                 }
                 continue;
             } elseif (_PS_MODE_DEV_) {
-                $this->log("New field $code");
+                $this->log('New field ' . $code);
             }
 
-            $names = array();
+            $values = array();
 
-            foreach ($this->_langs as $id_lang => $iso_code) {
-                $suffixLang      = '-' . $this->_labels[$iso_code];
-                $names[$id_lang] = $data[$this->_offsets['name' . $suffixLang]];
+            foreach ($this->_offsets['lang'] as $field => $offsets) {
+                foreach ($offsets as $idLang => $offset) {
+                    $values[$field][$idLang] = $data[$offset];
+                }
             }
 
-            //Add or update AttributeGroup
-            if (in_array($code, $arrDistinctAxes)) {
-                $attributeGroupId = MappingCodeAttributes::getIdByCode($code);
+            foreach ($this->_offsets['default'] as $field => $offset) {
+                $values[$field] = $data[$offset];
+            }
 
-                if ($attributeGroupId !== false) {
-                    $attributeGroup = new AttributeGroup($attributeGroupId);
-                    $attributeGroupExists = true;
+            foreach ($this->_offsets['date'] as $field => $offset) {
+                if (Validate::isDate($data[$offset])) {
+                    $values[$field] = $data[$offset];
                 } else {
-                    $attributeGroup = new AttributeGroup();
-                    $attributeGroupExists = false;
+                    $this->logError('Wrong date format for field ' . $field . ' : ' . $data['offset'] . '(for ' . $code . ')');
+                    $errorCount++;
                 }
-
-                $attributeGroup->group_type  = $this->_defaultAttributeGroupType;
-                $attributeGroup->name        = $names;
-                $attributeGroup->public_name = $names;
-
-                if (!$attributeGroup->save()) {
-                    $this->log('Could not save attribute group ' . $code);
-                    continue;
-                }
-
-                if (!$attributeGroupExists) {
-                    $mapping = new MappingCodeAttributes();
-                    $mapping->code               = $code;
-                    $mapping->id_attribute_group = $attributeGroup->id;
-
-                    if (!$mapping->add()) {
-                        $this->log('Could not save mapping for ' . $code);
-                        continue;
-                    }
-                }
-
-                continue;
             }
 
-            //Add or update Feature
-
-            $idFeature = MappingCodeFeatures::getIdByCode($code);
-
-            if ($idFeature === false) {
-                $feature = new Feature();
-                $featureExists = false;
-                $feature->position = Feature::getHigherPosition() + 1;
-            } else {
-                $feature = new Feature($idFeature);
-                $featureExists = true;
-            }
-
-            $feature->name = $names;
-
-            if (!$feature->save()) {
-                $this->log('Could not save new feature ' . $code);
-                continue;
-            }
-
-            if (!$featureExists) {
-                $mapping = new MappingCodeFeatures();
-                $mapping->id_feature = $feature->id;
-                $mapping->code       = $code;
-
-                if (!$mapping->add()) {
-                    $this->log('Could not save mapping for feature ' . $code);
-                    continue;
+            if (in_array($code, $distinctAxes)) {
+                if (!$this->_addOrUpdateAttributeGroup($code, $values)) {
+                    $this->logError('Could not save attribute ' . $code);
+                    $errorCount++;
                 }
+            }
+            if (!$this->_addOrUpdateFeature($code, $type, $values)) {
+                $this->logError('Could not save feature ' . $code);
+                $errorCount++;
             }
         }
 
-        $this->_mover->finishAction(basename($reader->getCurrentFileName()), true);
+        $endStatus = ($errorCount == $lastErrorCount);
+        $this->_mover->finishAction(basename($currentFile), $endStatus);
         return true;
     }
 
@@ -177,5 +171,96 @@ class ImportAttribute extends ImportAbstract
         foreach ($collection->getResults() as $mapping) {
             $mapping->delete();
         }
+    }
+
+    /**
+     * @param string $code
+     * @param array  $values
+     *
+     * @return bool
+     */
+    protected function _addOrUpdateAttributeGroup($code, $values)
+    {
+        $attributeGroupId = MappingCodeAttributes::getIdByCode($code);
+
+        if (!$attributeGroupId) {
+            $attributeGroup = new AttributeGroup();
+        } else {
+            $attributeGroup = new AttributeGroup($attributeGroupId);
+        }
+
+        $attributeGroup->group_type = $this->_defaultAttributeGroupType;
+
+        foreach ($values as $field => $value) {
+            $attributeGroup->{$field} = $value;
+        }
+
+        if (!array_key_exists('public_name', $values)) {
+            $attributeGroup->public_name = $attributeGroup->name;
+        }
+
+        if (!$attributeGroup->save()) {
+            $this->logError('Could not save attribute group ' . $code);
+            return false;
+        }
+
+        if (!$attributeGroupId) {
+            $mapping                     = new MappingCodeAttributes();
+            $mapping->code               = $code;
+            $mapping->id_attribute_group = $attributeGroup->id;
+
+            if (!$mapping->add()) {
+                $this->logError('Could not save mapping for ' . $code);
+                return false;
+            }
+        }
+        if (_PS_MODE_DEV_) {
+            $this->log('New attribute saved : ' . $code);
+        }
+        return true;
+    }
+
+    /**
+     * @param string $code
+     * @param string $type
+     * @param array  $values
+     *
+     * @return bool
+     */
+    protected function _addOrUpdateFeature($code, $type, $values)
+    {
+        $idFeature = MappingCodeFeatures::getIdByCode($code);
+
+        if (!$idFeature) {
+            $feature           = new Feature();
+            $feature->position = Feature::getHigherPosition() + 1;
+        } else {
+            $feature = new Feature($idFeature);
+        }
+
+        foreach ($values as $field => $value) {
+            $feature->{$field} = $value;
+        }
+
+        if (!$feature->save()) {
+            $this->logError('Could not save new feature ' . $code);
+            return false;
+        }
+
+        if (!$idFeature) {
+            $mapping             = new MappingCodeFeatures();
+            $mapping->id_feature = $feature->id;
+            $mapping->code       = $code;
+            $mapping->type       = $type;
+
+            if (!$mapping->add()) {
+                $this->logError('Could not save mapping for feature ' . $code);
+                return false;
+            }
+        }
+        if (_PS_MODE_DEV_) {
+            $this->log('New feature saved : ' . $code);
+        }
+        return true;
     }
 }
