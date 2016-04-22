@@ -4,6 +4,16 @@ class ImportAkeneo extends ImportAbstract
 {
     public function process()
     {
+        $folderUtil = Utils::exec('folder');
+        $path       = $this->_manager->getPath() . '/files/';
+
+        if (!$folderUtil->isFolderEmpty($path)) {
+            if (_PS_MODE_DEV_) {
+                $this->log('Cleaning working folder');
+            }
+            $folderUtil->delTree($path, false);
+        }
+
         $categoryImporter = new ImportCategory();
         if (!$categoryImporter->import()) {
             return false;

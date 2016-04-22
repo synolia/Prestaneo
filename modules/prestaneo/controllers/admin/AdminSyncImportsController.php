@@ -32,6 +32,7 @@ class AdminSyncImportsController extends ModuleAdminController
         $this->context = Context::getContext();
 
         parent::__construct();
+        $this->module->setSelfLink($this->context->link->getAdminLink($this->controller_name));
     }
 
     public function setMedia()
@@ -47,36 +48,28 @@ class AdminSyncImportsController extends ModuleAdminController
 
     public function display()
     {
-        $smartyVariables = array();
-        if(MOD_CRON)
-        {
-            $smartyVariables = array_merge($smartyVariables, array(
-                    'form_cron_create'  => $this->module->renderFormCron(),
-                    'mod_cron_enabled'  => MOD_CRON,
-                    'title_cron_list'   => $this->l('Cron List')
-                )
-            );
+        $smartyVariables = array(
+            'import'        => $this->module->readImportFolder(),
+            'link'          => $this->context->link,
+            'path'          => '/modules/'.$this->module->name,
+            'cronpath'      => $this->context->shop->getBaseURL().'modules/'.$this->module->name.'/cron.php',
+            'mod_sync'      => MOD_SYNC,
+            'mod_sync_name' => MOD_SYNC_NAME,
+            'languages'     => Language::getLanguages(),
+            'language'      => Language::getLanguage($this->context->language->id),
+            'selfLink'      => $this->module->getSelfLink()
+        );
+
+        if(MOD_CRON) {
+            $smartyVariables['form_cron_create']  = $this->module->renderFormCron();
+            $smartyVariables['mod_cron_enabled']  = MOD_CRON;
+            $smartyVariables['title_cron_list']   = $this->l('Cron List');
         }
-        $smartyVariables = array_merge($smartyVariables,
-            array(
-                'import'        => $this->module->readImportFolder(),
-                'link'          => $this->context->link,
-                'path'          => '/modules/'.$this->module->name,
-                'cronpath'      => $this->context->shop->getBaseURL().'modules/'.$this->module->name.'/cron.php',
-                'mod_sync'      => MOD_SYNC,
-                'mod_sync_name' => MOD_SYNC_NAME,
-                'languages'     => Language::getLanguages(),
-                'language'      => Language::getLanguage($this->context->language->id),
-            )
-        );
-        if(count($smartyVariables))
-            $this->context->smarty->assign($smartyVariables);
-        $this->content .= Overrider::getInstance()->display(__FILE__, 'imports.tpl' );
-        $this->content  = preg_replace(
-            '#(\s*\<\s*form.*)(?=\saction)\saction\="[^"]*"([^>]*\>\s*)#i',
-            '$1$2',
-            $this->content
-        );
+
+        $this->context->smarty->assign($smartyVariables);
+
+        $this->content = Overrider::getInstance()->display(__FILE__, 'imports.tpl' );
+
         $this->context->smarty->assign('content', $this->content);
         return parent::display();
     }

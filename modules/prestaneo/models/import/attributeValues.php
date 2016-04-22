@@ -2,17 +2,36 @@
 
 class ImportAttributeValues extends ImportAbstract
 {
+
     public static $order = 4;
 
+    /**
+     * Imports attributes and features values
+     *
+     * @return bool
+     * @throws Exception
+     */
     public function process()
     {
         $delimiter = Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') : ';';
 
-        $fileTransferHost = Configuration::get(MOD_SYNC_NAME.'_ftphost');
-        if(!empty($fileTransferHost)) {
-            $fileTransfer = $this->_getFtpConnection();
+        $folderUtil = Utils::exec('folder');
+        $path       = $this->_manager->getPath() . '/files/';
 
-            $fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH'), $this->_manager->getPath().'/files/', '*.csv');
+        if ($folderUtil->isFolderEmpty($path)) {
+            $fileTransferHost = Configuration::get(MOD_SYNC_NAME . '_ftphost');
+            if (!empty($fileTransferHost)) {
+                if (_PS_MODE_DEV_) {
+                    $this->log('Fetching files from FTP');
+                }
+                $fileTransfer = $this->_getFtpConnection();
+
+                if (!$fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH'), $path, '*.csv')) {
+                    $this->logError('There was an error while retrieving the files from the FTP');
+                    $folderUtil->delTree($path, false);
+                    return false;
+                }
+            }
         }
 
         $reader      = new CsvReader($this->_manager, $delimiter);
@@ -38,10 +57,22 @@ class ImportAttributeValues extends ImportAbstract
         $this->_offsets = array_flip($headers);
 
         $this->_getLangsInCsv($headers);
-        $this->_mapOffsets(MappingAttributeValues::getAllPrestashopFields());
 
-        $arrDistinctAxes = MappingTmpAttributes::getDistinctAxes();
-        if ($arrDistinctAxes === false) {
+        $nameField = MappingAttributeValues::getAkeneoField('name');
+        $nameOffsets = array();
+
+        foreach ($this->_langs as $isoCode => $idLang) {
+            if (array_key_exists($nameField . '-' . $isoCode, $this->_offsets)) {
+                $nameOffsets[$this->_langs[$isoCode]] = $this->_offsets[$nameField . '-' . $isoCode];
+            }
+        }
+
+        $this->_mapOffsets(array('Attribute', 'FeatureValue'), MappingAttributeValues::getAllPrestashopFields());
+
+        $this->_offsets['special']['name'] = $nameOffsets;
+
+        $distinctAxes = MappingTmpAttributes::getDistinctAxes();
+        if ($distinctAxes === false) {
             $this->log("There was a problem while retrieving axes");
             $this->_mover->finishAction(basename($currentFile), false);
             return false;
@@ -69,21 +100,21 @@ class ImportAttributeValues extends ImportAbstract
 
             $data = $this->_cleanDataLine($data);
 
-            $code      = $data[$this->_offsets['code']];
-            $attribute = $data[$this->_offsets['attribute_group']];
+            $code      = $data[$this->_offsets['special']['code']];
+            $attribute = $data[$this->_offsets['special']['attribute_group']];
 
             $names = array();
-            foreach ($this->_langs as $langId => $isoCode) {
-                $names[$langId] = $data[$this->_offsets['name-' . $this->_labels[$isoCode]]];
+            foreach ($this->_offsets['special']['name'] as $langId => $offset) {
+                $names[$langId] = $data[$offset];
             }
 
-            if (in_array($attribute, $arrDistinctAxes)) {
+            if (in_array($attribute, $distinctAxes)) {
                 if (!$this->_addOrUpdateAttributeValue($attribute, $code, $names, $defaultShopId)) {
                     $errorCount++;
                 }
             }
 
-            if (!$this->_addOrUpdateFeatureValue($attribute, $code, $names, $defaultShopId)) {
+            if (!$this->_addOrUpdateFeatureValue($attribute, $code, $names)) {
                 $errorCount++;
             }
         }
@@ -110,14 +141,12 @@ class ImportAttributeValues extends ImportAbstract
             return false;
         }
 
-        $attributeGroup = new AttributeGroup($attributeGroupId);
-
-        $attributeId = MappingCodeAttributeValues::getIdByCode($code);
+        $attributeId = MappingCodeAttributeValues::getIdByCodeAndGroup($code, $attributeGroupName);
 
         if (!$attributeId) {
             $attribute                     = new Attribute();
-            $attribute->id_attribute_group = $attributeGroup->id;
-            $attribute->position           = Attribute::getHigherPosition($attributeGroup->id) + 1;
+            $attribute->id_attribute_group = $attributeGroupId;
+            $attribute->position           = Attribute::getHigherPosition($attributeGroupId) + 1;
         } else {
             $attribute = new Attribute($attributeId);
         }
@@ -133,9 +162,10 @@ class ImportAttributeValues extends ImportAbstract
                 return false;
             } else {
                 if (!$attributeId) {
-                    $mappingAttribute                     = new MappingCodeAttributeValues();
-                    $mappingAttribute->code               = $code;
-                    $mappingAttribute->id_attribute_value = $attribute->id;
+                    $mappingAttribute                       = new MappingCodeAttributeValues();
+                    $mappingAttribute->code                 = $code;
+                    $mappingAttribute->id_attribute_value   = $attribute->id;
+                    $mappingAttribute->code_attribute_group = $attributeGroupName;
 
                     if (!$mappingAttribute->save()) {
                         $this->logError('Could not save mapping for attribute ' . $code . ' of group ' . $attributeGroupName);
@@ -154,11 +184,10 @@ class ImportAttributeValues extends ImportAbstract
      * @param string $featureName
      * @param string $code
      * @param array  $values
-     * @param int    $defaultShopId
      *
      * @return bool
      */
-    protected function _addOrUpdateFeatureValue($featureName, $code, $values, $defaultShopId)
+    protected function _addOrUpdateFeatureValue($featureName, $code, $values)
     {
         $featureId = MappingCodeFeatures::getIdByCode($featureName);
 
@@ -167,13 +196,11 @@ class ImportAttributeValues extends ImportAbstract
             return false;
         }
 
-        $feature = new Feature($featureId);
-
-        $featureValueId = MappingCodeFeatureValues::getIdByCode($code);
+        $featureValueId = MappingCodeFeatureValues::getIdByCodeAndFeature($code, $featureName);
 
         if (!$featureValueId) {
             $featureValue             = new FeatureValue();
-            $featureValue->id_feature = $feature->id;
+            $featureValue->id_feature = $featureId;
             $featureValue->custom     = 0;
         } else {
             $featureValue = new FeatureValue($featureValueId);
@@ -189,6 +216,7 @@ class ImportAttributeValues extends ImportAbstract
                 $mappingFeature                   = new MappingCodeFeatureValues();
                 $mappingFeature->code             = $code;
                 $mappingFeature->id_feature_value = $featureValue->id;
+                $mappingFeature->code_feature     = $featureName;
 
                 if (!$mappingFeature->save()) {
                     $this->logError('Could not save mapping for feature value ' . $code . ' for feature ' . $featureName);

@@ -15,12 +15,25 @@ class ImportVariant extends ImportAbstract
     {
         $delimiter = Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') : ';';
 
-        $fileTransferHost = Configuration::get(MOD_SYNC_NAME.'_ftphost');
-        if(!empty($fileTransferHost)) {
-            $fileTransfer = $this->_getFtpConnection();
+        $folderUtil = Utils::exec('folder');
+        $path       = $this->_manager->getPath() . '/files/';
 
-            $fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH'), $this->_manager->getPath().'/files/', '*.csv');
+        if ($folderUtil->isFolderEmpty($path)) {
+            $fileTransferHost = Configuration::get(MOD_SYNC_NAME . '_ftphost');
+            if (!empty($fileTransferHost)) {
+                if (_PS_MODE_DEV_) {
+                    $this->log('Fetching files from FTP');
+                }
+                $fileTransfer = $this->_getFtpConnection();
+
+                if (!$fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH'), $path, '*.csv')) {
+                    $this->logError('There was an error while retrieving the files from the FTP');
+                    $folderUtil->delTree($path, false);
+                    return false;
+                }
+            }
         }
+
         $reader      = new CsvReader($this->_manager, $delimiter);
         $dataLines   = $reader->getData();
         $currentFile = $reader->getCurrentFileName(0);
@@ -45,7 +58,7 @@ class ImportVariant extends ImportAbstract
 
         $this->_offsets = array_flip($headers);
 
-        $this->_mapOffsets(MappingAttributes::getAllPrestashopFields());
+        $this->_mapOffsets('MappingTmpAttributes', MappingAttributes::getAllPrestashopFields());
 
         $errorCount     = 0;
         $lastErrorCount = 0;
@@ -66,8 +79,8 @@ class ImportVariant extends ImportAbstract
             }
             $data = $this->_cleanDataLine($data);
 
-            $code = $data[$this->_offsets['code']];
-            $axis = $data[$this->_offsets['axis']];
+            $code = $data[$this->_offsets['default']['code']];
+            $axis = $data[$this->_offsets['default']['axis']];
 
             if (empty($code) || empty($axis)) {
                 $this->logError('Code and/or axis are empty on line ' . ($line + 2));

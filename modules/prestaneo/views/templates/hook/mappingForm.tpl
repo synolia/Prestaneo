@@ -1,4 +1,4 @@
-<form method="post" class="form_mapping">
+<form method="post" class="form_mapping" action="{$selfLink}">
     <div class="panel">
         <div class="panel-heading">
             <i class="icon-list-ul"></i> {l s={$title} mod={$mod_name}}

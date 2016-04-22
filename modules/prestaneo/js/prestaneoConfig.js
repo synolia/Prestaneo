@@ -5,7 +5,7 @@ $(function () {
         var nextId = -1;
 
         return function () {
-            var $table  = $(this).parent().prev().find('tbody');
+            var $table  = $(this).parents('.panel').find('.table_mapping>tbody');
             var $newRow = $table.find('.tr_clone').first().clone();
 
             $newRow.find('input, select').val('');

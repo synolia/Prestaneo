@@ -39,13 +39,14 @@ class ImportAbstract extends Importer
         if (!is_array($headers) || empty($headers))
             return false;
 
-        $filter = '/(.+?)-([a-zA-Z_-]+)$/';
+        $filter = '#^(.+?)-(\w{2,3})_\w+(?:-\w+)?$#';
+
+        $this->_offsets = array();
 
         foreach ($headers as $offset => $header) {
             if (preg_match($filter, $header, $results)) {
                 $field   = $results[1];
-                $tag     = $results[2];
-                $isoCode = substr($tag, 0, 2);
+                $isoCode = $results[2];
 
                 if ($isoCode === false) {
                     continue;
@@ -54,18 +55,16 @@ class ImportAbstract extends Importer
                 $langId  = (int)Language::getIdByIso($isoCode, false);
 
                 if ($langId != 0) {
-                    $this->_langs[$langId]   = $isoCode;
+                    $this->_langs[$isoCode] = $langId;
 
-                    $cleanTag = strstr($tag, '-', true);
-                    if ($cleanTag) {
-                        $tag = $cleanTag;
+                    if (!isset($this->_offsets[$field . '-' . $isoCode])) {
+                        $this->_offsets[$field . '-' . $isoCode] = $offset;
                     }
-                    $this->_labels[$isoCode] = $tag;
-
-                    if (!isset($this->_offsets[$field . '-' . $tag])) {
-                        $this->_offsets[$field . '-' . $tag] = $offset;
-                    }
+                } else {
+                    $this->_offsets[$header] = $offset;
                 }
+            } else {
+                $this->_offsets[$header] = $offset;
             }
         }
         return true;
@@ -83,7 +82,7 @@ class ImportAbstract extends Importer
 
         foreach ($requiredFields as $required) {
             //Matching normal, translatable and currencies fields
-            $found = preg_grep("/^{$required}(?:$|-)/s", $fields);
+            $found = preg_grep('#^' . $required . '(?:$|-)#', $fields);
 
             if (empty($found)) {
                 $missingFields[] = $required;
@@ -93,42 +92,92 @@ class ImportAbstract extends Importer
     }
 
     /**
-     * Replaces offset names from Akeneo by the PrestaShop equivalents
+     * Replaces offset names from Akeneo by the PrestaShop equivalents and filters non wanted offsets
      *
+     * @param       $classes
      * @param array $mappings
      * @param array $exclude list of PrestaShop fields for which name replacement should not be done
+     *
+     * @return bool
      */
-    protected function _mapOffsets($mappings, $exclude = array()) {
-        $newOffsets = array();
-        $filter = '/(.+?)(-[a-zA-Z_-]+)$/';
+    protected function _mapOffsets($classes, $mappings, $exclude = array()) {
+        if (!is_array($classes)) {
+            $classes = array($classes);
+        }
+
+        $isFirst = true;
+        $objectFields = array();
+        foreach ($classes as $class) {
+            $className  = ucfirst($class);
+            $reflection = new ReflectionClass($className);
+
+            if (!$reflection->hasProperty('definition')) {
+                return false;
+            }
+
+            $definition = $reflection->getStaticPropertyValue('definition');
+
+            if ($isFirst) {
+                $isFirst = false;
+                $objectFields = $definition['fields'];
+            } else {
+                $objectFields = array_intersect_assoc($objectFields, $definition['fields']);
+            }
+        }
 
         if (!is_array($exclude)) {
             $exclude = array($exclude);
         }
-
         $mappings = array_diff($mappings, $exclude);
 
-        foreach ($this->_offsets as $fullField => $position) {
-            if (preg_match($filter, $fullField, $matches)) {
-                $field  = $matches[1];
-                $suffix = $matches[2];
-            } else {
-                $field  = $fullField;
-                $suffix = '';
-            }
+        $offsetFields  = array_keys($this->_offsets);
+        $defaultLangId = Configuration::get('PS_LANG_DEFAULT');
+        $filter        = '#^(.+?)-(\w{2,3})$#';
 
-            if (isset($mappings[$field]) && !isset($exclude[$field])) {
-                $newOffsets[$mappings[$field] . $suffix] = $position;
-            } else {
-                $newOffsets[$fullField] = $position;
+        $newOffsets = array(
+            'default' => array(),
+            'lang'    => array(),
+            'date'    => array(),
+            'special' => array(),
+        );
+
+        foreach ($mappings as $akeneo => $presta) {
+            if (array_key_exists($presta, $objectFields)) {
+                if (array_key_exists('lang', $objectFields[$presta]) && $objectFields[$presta]['lang']) {
+                    $fieldType = 'lang';
+                } elseif ($objectFields[$presta]['type'] == ObjectModel::TYPE_DATE) {
+                    $fieldType = 'date';
+                } else {
+                    $fieldType = 'default';
+                }
+
+                if ($fieldType == 'lang') {
+                    $matches = preg_grep('#^' . $akeneo . '-(\w{2,3})$#', $offsetFields);
+
+                    foreach ($matches as $fullField) {
+                        if (preg_match($filter, $fullField, $result)) {
+                            if (!array_key_exists($result[2], $this->_langs)) {
+                                continue;
+                            }
+                            $langId = $this->_langs[$result[2]];
+                        } else {
+                            $langId = $defaultLangId;
+                        }
+                        $newOffsets[$fieldType][$presta][$langId] = $this->_offsets[$fullField];
+                    }
+                } elseif (array_key_exists($akeneo, $this->_offsets)) {
+                    $newOffsets[$fieldType][$presta] = $this->_offsets[$akeneo];
+                }
+            } elseif (array_key_exists($akeneo, $this->_offsets)) {
+                $newOffsets['special'][$presta] = $this->_offsets[$akeneo];
             }
         }
+
         $this->_offsets = $newOffsets;
-        return;
     }
 
     /**
-     * @return UtilsFtp
+     * @return UtilsFtp|UtilsSftp
      */
     protected function _getFtpConnection()
     {

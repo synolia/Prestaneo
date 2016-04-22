@@ -17,11 +17,23 @@ class ImportAttribute extends ImportAbstract
     {
         $delimiter = Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_DELIMITER') : ';';
 
-        $fileTransferHost = Configuration::get(MOD_SYNC_NAME.'_ftphost');
-        if(!empty($fileTransferHost)) {
-            $fileTransfer = $this->_getFtpConnection();
+        $folderUtil = Utils::exec('folder');
+        $path       = $this->_manager->getPath() . '/files/';
 
-            $fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH'), $this->_manager->getPath().'/files/', '*.csv');
+        if ($folderUtil->isFolderEmpty($path)) {
+            $fileTransferHost = Configuration::get(MOD_SYNC_NAME . '_ftphost');
+            if (!empty($fileTransferHost)) {
+                if (_PS_MODE_DEV_) {
+                    $this->log('Fetching files from FTP');
+                }
+                $fileTransfer = $this->_getFtpConnection();
+
+                if (!$fileTransfer->getFiles(Configuration::get(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH'), $path, '*.csv')) {
+                    $this->logError('There was an error while retrieving the files from the FTP');
+                    $folderUtil->delTree($path, false);
+                    return false;
+                }
+            }
         }
         $reader      = new CsvReader($this->_manager, $delimiter);
         $dataLines   = $reader->getData();
@@ -46,10 +58,10 @@ class ImportAttribute extends ImportAbstract
         $this->_offsets = array_flip($headers);
 
         $this->_getLangsInCsv($headers);
-        $this->_mapOffsets(MappingFeatures::getAllPrestashopFields());
+        $this->_mapOffsets(array('AttributeGroup', 'Feature'), MappingFeatures::getAllPrestashopFields());
 
-        $arrDistinctAxes = MappingTmpAttributes::getDistinctAxes();
-        if ($arrDistinctAxes === false) {
+        $distinctAxes = MappingTmpAttributes::getDistinctAxes();
+        if ($distinctAxes === false) {
             $this->logError("There was a problem while retrieving axes");
             $this->_mover->finishAction(basename($currentFile), false);
             return false;
@@ -75,8 +87,8 @@ class ImportAttribute extends ImportAbstract
             }
             $data = $this->_cleanDataLine($data);
 
-            $code = $data[$this->_offsets['code']];
-            $type = $data[$this->_offsets['type']];
+            $code = $data[$this->_offsets['special']['code']];
+            $type = $data[$this->_offsets['special']['type']];
 
             if (empty($code)) {
                 $this->logError('Missing code on line ' . ($line + 2));
@@ -111,20 +123,34 @@ class ImportAttribute extends ImportAbstract
                 $this->log('New field ' . $code);
             }
 
-            $names = array();
+            $values = array();
 
-            foreach ($this->_langs as $id_lang => $iso_code) {
-                $suffixLang      = '-' . $this->_labels[$iso_code];
-                $names[$id_lang] = $data[$this->_offsets['name' . $suffixLang]];
+            foreach ($this->_offsets['lang'] as $field => $offsets) {
+                foreach ($offsets as $idLang => $offset) {
+                    $values[$field][$idLang] = $data[$offset];
+                }
             }
 
-            if (in_array($code, $arrDistinctAxes)) {
-                if (!$this->_addOrUpdateAttributeGroup($code, $names)) {
+            foreach ($this->_offsets['default'] as $field => $offset) {
+                $values[$field] = $data[$offset];
+            }
+
+            foreach ($this->_offsets['date'] as $field => $offset) {
+                if (Validate::isDate($data[$offset])) {
+                    $values[$field] = $data[$offset];
+                } else {
+                    $this->logError('Wrong date format for field ' . $field . ' : ' . $data['offset'] . '(for ' . $code . ')');
+                    $errorCount++;
+                }
+            }
+
+            if (in_array($code, $distinctAxes)) {
+                if (!$this->_addOrUpdateAttributeGroup($code, $values)) {
                     $this->logError('Could not save attribute ' . $code);
                     $errorCount++;
                 }
             }
-            if (!$this->_addOrUpdateFeature($code, $type, $names)) {
+            if (!$this->_addOrUpdateFeature($code, $type, $values)) {
                 $this->logError('Could not save feature ' . $code);
                 $errorCount++;
             }
@@ -149,11 +175,11 @@ class ImportAttribute extends ImportAbstract
 
     /**
      * @param string $code
-     * @param array  $names
+     * @param array  $values
      *
      * @return bool
      */
-    protected function _addOrUpdateAttributeGroup($code, $names)
+    protected function _addOrUpdateAttributeGroup($code, $values)
     {
         $attributeGroupId = MappingCodeAttributes::getIdByCode($code);
 
@@ -163,9 +189,15 @@ class ImportAttribute extends ImportAbstract
             $attributeGroup = new AttributeGroup($attributeGroupId);
         }
 
-        $attributeGroup->group_type  = $this->_defaultAttributeGroupType;
-        $attributeGroup->name        = $names;
-        $attributeGroup->public_name = $names;
+        $attributeGroup->group_type = $this->_defaultAttributeGroupType;
+
+        foreach ($values as $field => $value) {
+            $attributeGroup->{$field} = $value;
+        }
+
+        if (!array_key_exists('public_name', $values)) {
+            $attributeGroup->public_name = $attributeGroup->name;
+        }
 
         if (!$attributeGroup->save()) {
             $this->logError('Could not save attribute group ' . $code);
@@ -191,11 +223,11 @@ class ImportAttribute extends ImportAbstract
     /**
      * @param string $code
      * @param string $type
-     * @param array  $names
+     * @param array  $values
      *
      * @return bool
      */
-    protected function _addOrUpdateFeature($code, $type, $names)
+    protected function _addOrUpdateFeature($code, $type, $values)
     {
         $idFeature = MappingCodeFeatures::getIdByCode($code);
 
@@ -206,7 +238,9 @@ class ImportAttribute extends ImportAbstract
             $feature = new Feature($idFeature);
         }
 
-        $feature->name = $names;
+        foreach ($values as $field => $value) {
+            $feature->{$field} = $value;
+        }
 
         if (!$feature->save()) {
             $this->logError('Could not save new feature ' . $code);
