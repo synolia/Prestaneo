@@ -158,7 +158,7 @@ abstract class FileReader extends Prestaneo implements IReader
      */
     public function getCurrentFileName($offset=false)
     {
-        if(!$offset)
+        if($offset === false)
             return $this->_currentFileName;
         $ranges  = array_keys($this->_offsetsToFilename);
         if(!count($ranges))

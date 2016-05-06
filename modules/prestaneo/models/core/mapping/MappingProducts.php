@@ -2,9 +2,6 @@
 
 class MappingProducts extends MappingAbstract
 {
-    public $champ_akeneo;
-    public $champ_prestashop;
-
     public static $definition = array(
         'table'   => 'mapping_products',
         'primary' => 'id_mapping',
@@ -20,6 +17,14 @@ class MappingProducts extends MappingAbstract
         $sql = 'SELECT `champ_akeneo`
                 FROM ' . _DB_PREFIX_ . self::$definition['table'] . '
                 WHERE `champ_prestashop` = "image"';
+        return Db::getInstance()->executeS($sql);
+    }
+
+    public static function getFileFields()
+    {
+        $sql = 'SELECT `champ_akeneo`
+                FROM ' . _DB_PREFIX_ . self::$definition['table'] . '
+                WHERE `champ_prestashop` = "file"';
         return Db::getInstance()->executeS($sql);
     }
 }

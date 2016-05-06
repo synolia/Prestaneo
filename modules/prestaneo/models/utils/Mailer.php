@@ -33,7 +33,6 @@ Class UtilsMailer extends Utils
             $templateVars
         );
 
-        self::$moduleInstance->setError($error);
         if(!$result)
             self::$moduleInstance->setError($this->_error);
         return $result;
@@ -56,7 +55,6 @@ Class UtilsMailer extends Utils
             $templateVars
         );
 
-        self::$moduleInstance->setConfirmations($notification);
         if(!$result)
             self::$moduleInstance->setError($this->_error);
         return $result;

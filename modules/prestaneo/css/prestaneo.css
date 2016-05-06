@@ -20,6 +20,6 @@
     content:"\f019" !important;
 }
 
-.icon-AdminSyncImports:before {
-    content: "\f110" !important;
+.icon-AdminSync:before {
+    content: "\f110";
 }

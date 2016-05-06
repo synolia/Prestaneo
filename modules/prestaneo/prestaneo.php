@@ -41,7 +41,7 @@ class Prestaneo extends Module
     public function __construct()
     {
         $this->name = MOD_SYNC_NAME;
-        $this->version = '0.1.2';
+        $this->version = '0.1.3';
         $this->author = MOD_SYNC_DISPLAY_AUTHOR;
         $this->bootstrap = true;
 
@@ -420,7 +420,8 @@ class Prestaneo extends Module
 
         $sql = 'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'mapping_attributes` (`champ_akeneo`,`champ_prestashop`, `required`) VALUES
             ("code","code", 1),
-            ("axis","axis", 1);';
+            ("axis","axis", 1),
+            ("label","name", 1);';
         if (!Db::getInstance()->execute($sql))
             $return = false;
 
@@ -444,12 +445,13 @@ class Prestaneo extends Module
 			("enabled","active", 1),
 			("name","name", 1),
 			("price","price", 1),
-			("weight","weight", 0),
 			("description","description", 1),
 			("groups","groups", 1),
-			("picture","image", 0),
+			("available","available_for_order", 1),
+			("weight","weight", 0),
 			("short_description","description_short", 0),
-			("available","available_for_order", 1);';
+			("X_SELL-groups","cross_sell_group", 0),
+			("X_SELL-products","cross_sell_product", 0);';
         if (!Db::getInstance()->execute($sql))
             $return = false;
 
@@ -459,30 +461,31 @@ class Prestaneo extends Module
     protected function _installConfigurationKeys()
     {
         $return = true;
-        if (!Configuration::updateValue(MOD_SYNC_NAME . '_ipallowed',                                '')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftphost',                               '')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftplogin',                              '')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftppassword',                           '')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftppath',                               '/')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_dayshistoryfiles',                      '')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_cache',                                 '')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE',                      '')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_DELIMITER',                      ';')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH',               '/product')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH',              '/category')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH',             '/attribute')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH',      '/option')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH',               '/variant')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT',            999)
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES',                 1)
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES',                   1)
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS',             1)
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_CATEGORY_SPECIAL_FIELDS',       'code,code_parent')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_PRODUCT_SPECIAL_FIELDS',        'groups,categories,image')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_ATTRIBUTEGROUP_SPECIAL_FIELDS', 'code,type')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_FEATURE_SPECIAL_FIELDS',        'code,type')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_ATTRIBUTE_SPECIAL_FIELDS',      'code,attribute_group,name')
-            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_FEATUREVALUE_SPECIAL_FIELDS',   'code,attribute_group,name')
+        if (!Configuration::updateValue(MOD_SYNC_NAME . '_ipallowed',                                      '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftphost',                                     '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftplogin',                                    '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftppassword',                                 '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_ftppath',                                     '/')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_dayshistoryfiles',                            '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_cache',                                       '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE',                            '')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_DELIMITER',                            ';')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_PRODUCT_FTP_PATH',                     '/product')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_CATEGORY_FTP_PATH',                    '/category')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_FTP_PATH',                   '/attribute')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_ATTRIBUTE_VALUES_FTP_PATH',            '/option')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_VARIANT_FTP_PATH',                     '/variant')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_DEFAULT_QTY_PRODUCT',                  999)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_FEATURES',                       1)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_IMAGES',                         1)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_IMPORT_RESET_COMBINATIONS',                   1)
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_CATEGORY_SPECIAL_FIELDS',             'code,code_parent')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_PRODUCT_SPECIAL_FIELDS',              'groups,categories,image,file,cross_sell_product,cross_sell_group')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_ATTRIBUTEGROUP_SPECIAL_FIELDS',       'code,type')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_FEATURE_SPECIAL_FIELDS',              'code,type')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_ATTRIBUTE_SPECIAL_FIELDS',            'code,attribute_group,name')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_FEATUREVALUE_SPECIAL_FIELDS',         'code,attribute_group,name')
+            || !Configuration::updateValue(MOD_SYNC_NAME . '_MAPPING_MAPPINGTMPATTRIBUTES_SPECIAL_FIELDS', 'name')
         ) {
             $return = false;
         }
@@ -492,7 +495,7 @@ class Prestaneo extends Module
 
     public function hookActionAdminControllerSetMedia($params)
     {
-        Context::getContext()->controller->addCSS($this->_path . 'views/css/'.MOD_SYNC_NAME.'.css','all');
+        Context::getContext()->controller->addCSS($this->_path . 'views/css/'.MOD_SYNC_NAME.'_style.css','all');
         if (get_class(Context::getContext()->controller) == 'AdminDashboardController') {
             // Timeline
             Context::getContext()->controller->addJs($this->_path . 'views/js/timeline.js');
@@ -680,10 +683,10 @@ class Prestaneo extends Module
 
         $sql = '
             CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_tmp_attributes` (
-                `id_mapping` int(11) NOT NULL AUTO_INCREMENT,
+                `id_product` int(11) NOT NULL,
                 `code` varchar(255),
                 `axis` varchar(255),
-                PRIMARY KEY (`id_mapping`)
+                PRIMARY KEY (`id_product`)
             )ENGINE = InnoDB DEFAULT CHARSET=utf8;
         ';
         if (!Db::getInstance()->Execute($sql))
@@ -739,17 +742,6 @@ class Prestaneo extends Module
                 `champ_akeneo` varchar(255),
                 `champ_prestashop` varchar(255),
                 `required` bool,
-                PRIMARY KEY (`id_mapping`)
-            )ENGINE = InnoDB DEFAULT CHARSET=utf8;
-        ';
-        if (!Db::getInstance()->Execute($sql))
-            return false;
-
-        $sql = '
-            CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'mapping_products_groups` (
-                `id_mapping` int(11) NOT NULL AUTO_INCREMENT,
-                `id_product` int(11) NOT NULL,
-                `group_code` varchar(255),
                 PRIMARY KEY (`id_mapping`)
             )ENGINE = InnoDB DEFAULT CHARSET=utf8;
         ';
@@ -820,8 +812,7 @@ class Prestaneo extends Module
             `'._DB_PREFIX_.'mapping_attribute_values`,
             `'._DB_PREFIX_.'mapping_code_attribute_values`,
             `'._DB_PREFIX_.'mapping_code_feature_values`,
-            `'._DB_PREFIX_.'mapping_products`,
-            `'._DB_PREFIX_.'mapping_products_groups`;
+            `'._DB_PREFIX_.'mapping_products`;
         ';
         return Db::getInstance()->Execute($sql);
     }
@@ -874,6 +865,10 @@ class Prestaneo extends Module
             || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_CATEGORY_SPECIAL_FIELDS')
             || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_PRODUCT_SPECIAL_FIELDS')
             || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_ATTRIBUTE_GROUP_SPECIAL_FIELDS')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_FEATURE_SPECIAL_FIELDS')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_ATTRIBUTE_SPECIAL_FIELDS')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_FEATUREVALUE_SPECIAL_FIELDS')
+            || !Configuration::deleteByName(MOD_SYNC_NAME . '_MAPPING_MAPPINGTMPATTRIBUTES_SPECIAL_FIELDS')
         )
             return false;
 
@@ -2047,7 +2042,7 @@ class Prestaneo extends Module
 
     public function hookActionProductDelete($params)
     {
-        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_products_groups`
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'mapping_tmp_attributes`
             WHERE `id_product` = ' . pSQL($params['id_product']);
         Db::getInstance()->execute($sql);
     }

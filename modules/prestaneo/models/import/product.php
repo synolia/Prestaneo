@@ -1,14 +1,12 @@
 <?php
 class ImportProduct extends ImportAbstract
 {
-    protected $_offsetsName       = null;
-    protected $_fields            = null;
-
-    protected $_resetImages       = false;
-    protected $_resetFeatures     = false;
-    protected $_resetCombinations = false;
-    protected $_quantityDefault   = 0;
-    protected $_delimiter         = "";
+    protected $_resetImages            = false;
+    protected $_resetFeatures          = false;
+    protected $_resetCombinations      = false;
+    protected $_quantityDefault        = 0;
+    protected $_delimiter              = "";
+    protected $_knownProductReferences = array();
 
     public static $icon  = 'cubes';
     public static $order = 5;
@@ -26,6 +24,7 @@ class ImportProduct extends ImportAbstract
 
         $folderUtil = Utils::exec('Folder');
         $path       = $this->_manager->getPath() . '/files/';
+        $baseUrl    = str_replace(_PS_ROOT_DIR_, _PS_BASE_URL_, $path);
 
         if ($folderUtil->isFolderEmpty($path)) {
             $fileTransferHost = Configuration::get(MOD_SYNC_NAME . '_ftphost');
@@ -56,11 +55,10 @@ class ImportProduct extends ImportAbstract
         $archives = $folderUtil->getAllFilesInFolder($path, '*.zip');
 
         if (!empty($archives)) {
-            $hasImages = true;
             Utils::exec('Zip')->extractAll($archives, $path);
         }
 
-        $reader = new CsvReader($this->_manager, $this->_delimiter);
+        $reader = new CsvReader($this->_manager, $this->_delimiter, '"', 32 * 1024);
         $reader->setExtension('.csv');
 
         $dataLines   = $reader->getData();
@@ -99,12 +97,16 @@ class ImportProduct extends ImportAbstract
                 $pictureFields[$mappedPictureField['champ_akeneo']] = $offsets[$mappedPictureField['champ_akeneo']];
             }
         }
+        $hasImages = !empty($pictureFields);
 
-        if(!isset($hasImages))
-            $hasImages = true;
-        if (empty($pictureFields)) {
-            $hasImages = false;
+        $mappedFileFields  = MappingProducts::getFileFields();
+        $fileFields = array();
+        foreach ($mappedFileFields as $mappedFileField) {
+            if (array_key_exists($mappedFileField['champ_akeneo'], $offsets)) {
+                $fileFields[$mappedFileField['champ_akeneo']] = $offsets[$mappedFileField['champ_akeneo']];
+            }
         }
+        $hasFiles = !empty($fileFields);
 
         $axisOffsets = array();
 
@@ -126,7 +128,7 @@ class ImportProduct extends ImportAbstract
             $priceOffset = $offsets['price'];
             unset($offsets['price']);
         } else {
-            $priceOffset = 'emptyValue';
+            $priceOffset = 'zeroValue';
         }
 
         $this->_getLangsInCsv($headers);
@@ -135,23 +137,35 @@ class ImportProduct extends ImportAbstract
 
         $this->_mapOffsets('Product', MappingProducts::getAllPrestashopFields(), array('image'));
 
-        $defaultLangId       = Configuration::get('PS_LANG_DEFAULT');
-        $processedProductIds = array();
+        $defaultLangId     = Configuration::get('PS_LANG_DEFAULT');
+        $processedProducts = array();
 
         $referenceOffset     = isset($this->_offsets['default']['reference']) ?           $this->_offsets['default']['reference'] :           'emptyValue';
         $ean13Offset         = isset($this->_offsets['default']['ean13']) ?               $this->_offsets['default']['ean13'] :               'emptyValue';
         $idShopDefaultOffset = isset($this->_offsets['default']['id_shop_default']) ?     $this->_offsets['default']['id_shop_default'] :     'emptyValue';
         $categoryOffset      = isset($this->_offsets['default']['id_category_default']) ? $this->_offsets['default']['id_category_default'] : 'emptyValue';
+        $nameOffsets         = isset($this->_offsets['lang']['name']) ?                   $this->_offsets['lang']['name'] :                   array($defaultLangId => 'emptyValue');
 
         unset(
             $this->_offsets['default']['reference'],
             $this->_offsets['default']['ean13'],
             $this->_offsets['default']['id_shop_default'],
-            $this->_offsets['default']['id_category_default']
+            $this->_offsets['default']['id_category_default'],
+            $this->_offsets['lang']['name']
         );
+
+        //Will contain the list of associations that could not be created when the object was
+        $missingAccessories = array();
 
         $errorCount     = 0;
         $lastErrorCount = 0;
+
+        $importControllerReflection = new ReflectionClass('AdminImportController');
+
+        $copyImgMethod = $importControllerReflection->getMethod('copyImg');
+        $copyImgMethod->setAccessible(true);
+
+        $maxFeatureValueSize = FeatureValue::$definition['fields']['value']['size'];
 
         foreach ($dataLines as $line => $data) {
             $nextFile = $reader->getCurrentFileName($line);
@@ -175,9 +189,14 @@ class ImportProduct extends ImportAbstract
             $groupCode = $data[$this->_offsets['special']['groups']];
 
             $data['emptyValue'] = '';
+            $data['zeroValue']  = 0;
 
             if (empty($reference)) {
                 $this->logError('Missing reference on line ' . ($line + 2));
+                $errorCount++;
+                continue;
+            } elseif (!empty($groupCode) && !array_key_exists($groupCode, $axisOffsets)) {
+                $this->logError('Variant group ' . $groupCode . ' does not exist, skipping product ' . $reference);
                 $errorCount++;
                 continue;
             } elseif (_PS_MODE_DEV_) {
@@ -186,33 +205,31 @@ class ImportProduct extends ImportAbstract
 
             //Is out of the product update because it is needed even if the line is only a combination of an existing product
             $ean13 = $data[$ean13Offset];
-            if (empty($ean13) || !Validate::isEan13($ean13)) {
+            if (!Validate::isEan13($ean13)) {
                 $this->logNotification($reference . ' : ean13 not valid');
                 $errorCount++;
-                $ean13 = "";
+                $ean13 = '';
             }
 
             $isNewProduct = true;
             $knownProduct = false;
 
-            $productId    = MappingProductsGroups::getIdProductByGroupCode($groupCode);
+            if (empty($groupCode)) {
+                $productId = $this->_getProductIdByReference($reference);
+            } else {
+                $productId = $this->_getProductIdByReference($groupCode);
+            }
 
             if ($productId != false) {
-                if (isset($processedProductIds[$productId])) {
-                    $isNewProduct  = false;
-                }
-
                 $knownProduct = true;
-                $product      = new Product($productId);
-            } else {
-                //We may have a product without variant group
-                $productId = $this->_getProductIdByReference($reference);
-                if ($productId != false) {
-                    $product      = new Product($productId);
-                    $knownProduct = true;
+                if (isset($processedProducts[$productId])) {
+                    $isNewProduct = false;
+                    $product      = $processedProducts[$productId];
                 } else {
-                    $product = new Product();
+                    $product = new Product($productId);
                 }
+            } else {
+                $product = new Product();
             }
 
             $defaultShopId = (!empty($data[$idShopDefaultOffset]) ? $data[$idShopDefaultOffset] : Context::getContext()->shop->id);
@@ -233,21 +250,33 @@ class ImportProduct extends ImportAbstract
                     if (Validate::isDate($data[$offset])) {
                         $product->{$field} = $data[$offset];
                     } else {
-                        $this->logError('Wrong date format for field ' . $field . ' : ' . $data['offset'] . '(for product ' . $reference . ')');
+                        $this->logError($reference . ' : wrong date format for field ' . $field . ' : ' . $data['offset']);
                         $errorCount++;
                     }
                 }
 
                 //Adding missing attributes and default values for some
-                $product->reference = $reference;
-                $product->ean13     = $ean13;
+                $product->ean13 = $ean13;
 
-                //If no name is given, the default one is the reference
-                if (!is_array($product->name)) {
-                    $product->name = array($defaultLangId => $product->name);
+                if (empty($groupCode)) {
+                    $product->reference = $reference;
+                    $emptyName = true;
+                    foreach ($nameOffsets as $idLang => $nameOffset) {
+                        if (!empty($data[$nameOffset])) {
+                            $product->name[$idLang] = $data[$nameOffset];
+                            $emptyName              = false;
+                        }
+                    }
+                } else {
+                    $product->reference = $groupCode;
+                    if (!is_array($product->name)) {
+                        $product->name = array($defaultLangId => $product->name);
+                    }
+
+                    $emptyName = !array_filter($product->name);
                 }
 
-                if (!array_filter($product->name)) {
+                if ($emptyName) {
                     $product->name[$defaultLangId] = $reference;
                 }
 
@@ -337,7 +366,7 @@ class ImportProduct extends ImportAbstract
                 }
 
                 //Product has been saved
-                $processedProductIds[$product->id] = true;
+                $processedProducts[$product->id] = $product;
 
                 // Save Features
                 if ($this->_resetFeatures) {
@@ -375,6 +404,56 @@ class ImportProduct extends ImportAbstract
                     }
                 }
 
+                foreach ($featureOffsets['multiSelect'] as $featureCode => $featureInfos) {
+                    if (empty($data[$featureInfos['offset']])) {
+                        continue;
+                    }
+
+                    $featureValueCodes = explode(',', $data[$featureInfos['offset']]);
+
+                    $values       = array();
+                    $valueLengths = array();
+                    $emptyValue   = true;
+
+                    foreach ($featureValueCodes as $featureValueCode) {
+                        $featureValueId = MappingCodeFeatureValues::getIdByCodeAndFeature($featureValueCode, $featureCode);
+
+                        if (!$featureValueId) {
+                            $this->logError($reference . ' : feature value ' . $featureValueCode . ' does not exist for feature ' . $featureCode);
+                            $errorCount++;
+                            continue;
+                        }
+
+                        $featureValue = new FeatureValue($featureValueId);
+                        foreach ($featureValue->value as $langId => $value) {
+                            if (!array_key_exists($langId, $valueLengths)) {
+                                $valueLengths[$langId] = -2;
+                            }
+
+                            $newLength = $valueLengths[$langId] + strlen($value) + 2;
+                            if ($newLength > $maxFeatureValueSize) {
+                                $this->logError($product->reference . ' : can not add value ' . $value . ' to ' . $featureCode . ' : maximum length reached');
+                                $errorCount++;
+                            } else {
+                                if (!array_key_exists($langId, $values)) {
+                                    $values[$langId] = $value;
+                                } else {
+                                    $values[$langId] .= ', ' . $value;
+                                }
+
+                                $valueLengths[$langId] = $newLength;
+                                $emptyValue = false;
+                            }
+                        }
+                    }
+
+                    if (!$emptyValue) {
+                        if ($this->_saveCustomFeature($product, $featureInfos['id_feature'], $featureCode, $values) && _PS_MODE_DEV_) {
+                            $this->log($reference . ' : custom feature value ' . $values[$defaultLangId] . ' added for feature ' . $featureCode);
+                        }
+                    }
+                }
+
                 //Custom feature values
                 foreach ($featureOffsets['default'] as $featureCode => $featureInfos) {
                     $featureValues = array();
@@ -391,20 +470,7 @@ class ImportProduct extends ImportAbstract
                     }
 
                     if (!$emptyValue) {
-                        $featureValueId = $this->_addFeatureValue($featureInfos['id_feature'], $featureValues);
-
-                        if (!$featureValueId) {
-                            $this->logError($reference . ' : could not save feature value for ' . $featureCode);
-                            $errorCount++;
-                            continue;
-                        }
-
-                        if (!Product::addFeatureProductImport($product->id, $featureInfos['id_feature'], $featureValueId)) {
-                            $this->logError($reference . ' : could not associate to feature value ' . $featureCode . ' for feature ' . $featureCode);
-                            $errorCount++;
-                        }
-
-                        if (_PS_MODE_DEV_) {
+                        if ($this->_saveCustomFeature($product, $featureInfos['id_feature'], $featureCode, $featureValues) && _PS_MODE_DEV_) {
                             $this->log($reference . ' : custom feature value ' . $featureValues[$defaultLangId] . ' added for feature ' . $featureCode);
                         }
                     }
@@ -438,6 +504,67 @@ class ImportProduct extends ImportAbstract
                     //We save quantities only if the product is totally new
                     StockAvailable::setQuantity($product->id, 0, $this->_quantityDefault, $defaultShopId);
                 }
+
+                if ($hasFiles) {
+                    $paths = array();
+
+                    foreach ($fileFields as $fileField => $offset) {
+                        $filePath = $data[$offset];
+                        if (!empty($filePath)) {
+                            $paths[] = $path . $filePath;
+                        }
+                    }
+
+                    if (!$this->_updateAttachments($product, $paths, $defaultLangId)) {
+                        $errorCount++;
+                    }
+                }
+
+                if (
+                    isset($this->_offsets['special']['cross_sell_product'])
+                    || isset($this->_offsets['special']['cross_sell_group'])
+                ) {
+                    $product->deleteAccessories();
+                }
+            }
+
+            $accessories = array();
+
+            if (isset($this->_offsets['special']['cross_sell_product'])) {
+                if (!empty($data[$this->_offsets['special']['cross_sell_product']])) {
+                    $accessories = explode(',', $data[$this->_offsets['special']['cross_sell_product']]);
+                }
+            }
+
+            if (isset($this->_offsets['special']['cross_sell_group'])) {
+                if (!empty($data[$this->_offsets['special']['cross_sell_group']])) {
+                    $accessories = array_unique(
+                        array_merge(
+                            $accessories,
+                            explode(',', $data[$this->_offsets['special']['cross_sell_group']])
+                        )
+                    );
+                }
+            }
+
+            if (!empty($accessories)) {
+                $accessoryIds = array();
+
+                foreach ($accessories as $accessoryReference) {
+                    $accessoryId = $this->_getProductIdByReference($accessoryReference);
+
+                    if ($accessoryId != false) {
+                        $accessoryIds[] = $accessoryId;
+                    } else {
+                        $missingAccessories[$accessoryReference][] = $product->id;
+                    }
+                }
+
+                $product->changeAccessories(array_unique($accessoryIds));
+
+                if (_PS_MODE_DEV_) {
+                    $this->log($reference . ' : product accessories saved');
+                }
             }
 
             $addedImages = array();
@@ -470,7 +597,7 @@ class ImportProduct extends ImportAbstract
                         $errorCount++;
                         $highestPosition--;
                     } else {
-                        if (!$this->copyImg($product->id, $image->id, $imagePath, 'products', true)) {
+                        if (!$copyImgMethod->invoke(null, $product->id, $image->id, $baseUrl . $imageRelativePath, 'products', true)) {
                             $this->logError($reference . ' : could not copy image ' . $imagePath);
                             $errorCount++;
                             $image->delete();
@@ -510,18 +637,6 @@ class ImportProduct extends ImportAbstract
 
                 $this->addOrUpdateProductAttributeCombination($product, $ean13, $attributeIds, $reference, $price, $addedImages);
 
-                $mappingId = MappingProductsGroups::getMappingByGroupCode($groupCode);
-                if ($mappingId === false) {
-                    $mapping = new MappingProductsGroups();
-                    $mapping->id_product = $product->id;
-                    $mapping->group_code = $groupCode;
-
-                    if (!$mapping->save()) {
-                        $this->logError($reference . ' : could not save mapping with group ' . $groupCode);
-                        $errorCount++;
-                    }
-                }
-
                 if ($isNewProduct) {
                     $product->checkDefaultAttributes();
                 }
@@ -532,9 +647,39 @@ class ImportProduct extends ImportAbstract
             }
         }
 
+        $accessoriesToAdd = array();
+
+        foreach ($missingAccessories as $accessoryReference => $productIds) {
+            $accessoryId = $this->_getProductIdByReference($accessoryReference);
+
+            if ($accessoryId != false) {
+                foreach ($productIds as $productId) {
+                    $accessoriesToAdd[$productId][] = $accessoryId;
+                }
+            } else {
+                $this->logError($accessoryReference . ' does not exist, accessories pointing to it can not be saved');
+                $errorCount++;
+            }
+        }
+
+        foreach ($accessoriesToAdd as $productId => $accessories) {
+            if (isset($processedProducts[$productId])) {
+                $product = $processedProducts[$productId];
+            } else {
+                $product = new Product($productId);
+            }
+
+            $product->changeAccessories(array_unique($accessories));
+            if (_PS_MODE_DEV_) {
+                $this->log($product->reference . ' : missing accessories added');
+            }
+        }
+
         $endStatus = ($errorCount == $lastErrorCount);
         $this->_mover->finishAction(basename($currentFile), $endStatus);
         $folderUtil->delTree($path, false);
+
+        $this->_removeUnusedAttachments();
 
         // Search Indexation
         if (!Search::indexation()) {
@@ -552,10 +697,14 @@ class ImportProduct extends ImportAbstract
      * @param string $reference
      * @return int|bool
      */
-    protected static function _getProductIdByReference($reference)
+    protected function _getProductIdByReference($reference)
     {
         if (strlen($reference) == 0) {
             return false;
+        }
+
+        if (array_key_exists($reference, $this->_knownProductReferences)) {
+            return $this->_knownProductReferences[$reference];
         }
 
         $sqlReference = pSQL($reference);
@@ -568,7 +717,12 @@ class ImportProduct extends ImportAbstract
             ->groupBy('p.id_product')
         ;
 
-        return Db::getInstance(_PS_USE_SQL_SLAVE_)->getValue($query);
+        $id = Db::getInstance(_PS_USE_SQL_SLAVE_)->getValue($query);
+        if ($id) {
+            $this->_knownProductReferences[$reference] = $id;
+        }
+
+        return $id;
     }
 
     /**
@@ -632,124 +786,6 @@ class ImportProduct extends ImportAbstract
     }
 
     /**
-     * copyImg copy an image located in $url and save it in a path
-     * according to $entity->$id_entity .
-     * $id_image is used if we need to add a watermark
-     *
-     * @param int $id_entity id of product or category (set in entity)
-     * @param int $id_image (default null) id of the image if watermark enabled.
-     * @param string $url path or url to use
-     * @param string $entity 'products' or 'categories'
-     * @param bool $regenerate
-     * @return bool
-     */
-
-    protected function copyImg($id_entity, $id_image = null, $url, $entity = 'products', $regenerate = true)
-    {
-        $tmpfile         = tempnam(_PS_TMP_IMG_DIR_, 'ps_import');
-        $watermark_types = explode(',', Configuration::get('WATERMARK_TYPES'));
-
-        switch ($entity) {
-            default:
-            case 'products':
-                $image_obj = new Image($id_image);
-                $path      = $image_obj->getPathForCreation();
-                break;
-            case 'categories':
-                $path = _PS_CAT_IMG_DIR_ . (int)$id_entity;
-                break;
-            case 'manufacturers':
-                $path = _PS_MANU_IMG_DIR_ . (int)$id_entity;
-                break;
-            case 'suppliers':
-                $path = _PS_SUPP_IMG_DIR_ . (int)$id_entity;
-                break;
-        }
-
-        $url        = urldecode(trim($url));
-        $parced_url = parse_url($url);
-
-        if (isset($parced_url['path'])) {
-            $uri   = ltrim($parced_url['path'], '/');
-            $parts = explode('/', $uri);
-            foreach ($parts as &$part) {
-                $part = rawurlencode($part);
-            }
-            unset($part);
-            $parced_url['path'] = '/' . implode('/', $parts);
-        }
-
-        if (isset($parced_url['query'])) {
-            $query_parts = array();
-            parse_str($parced_url['query'], $query_parts);
-            $parced_url['query'] = http_build_query($query_parts);
-        }
-
-        if (!function_exists('http_build_url')) {
-            require_once(_PS_TOOL_DIR_ . 'http_build_url/http_build_url.php');
-        }
-
-        $url = http_build_url('', $parced_url);
-
-        $orig_tmpfile = $tmpfile;
-
-        if (Tools::copy($url, $tmpfile)) {
-            // Evaluate the memory required to resize the image: if it's too much, you can't resize it.
-            if (!ImageManager::checkImageMemoryLimit($tmpfile)) {
-                @unlink($tmpfile);
-                return false;
-            }
-
-            $tgt_width = $tgt_height = 0;
-            $src_width = $src_height = 0;
-            $error     = 0;
-            ImageManager::resize($tmpfile, $path . '.jpg', null, null, 'jpg', false, $error, $tgt_width, $tgt_height, 5,
-                $src_width, $src_height);
-            $images_types = ImageType::getImagesTypes($entity, true);
-
-            if ($regenerate) {
-                $previous_path = null;
-                $path_infos    = array();
-                $path_infos[]  = array($tgt_width, $tgt_height, $path . '.jpg');
-                foreach ($images_types as $image_type) {
-                    $tmpfile = $this->get_best_path($image_type['width'], $image_type['height'], $path_infos);
-
-                    if (ImageManager::resize($tmpfile, $path . '-' . stripslashes($image_type['name']) . '.jpg', $image_type['width'],
-                        $image_type['height'], 'jpg', false, $error, $tgt_width, $tgt_height, 5,
-                        $src_width, $src_height)
-                    ) {
-                        // the last image should not be added in the candidate list if it's bigger than the original image
-                        if ($tgt_width <= $src_width && $tgt_height <= $src_height) {
-                            $path_infos[] = array($tgt_width, $tgt_height, $path . '-' . stripslashes($image_type['name']) . '.jpg');
-                        }
-                    }
-                    if (in_array($image_type['id_image_type'], $watermark_types)) {
-                        Hook::exec('actionWatermark', array('id_image' => $id_image, 'id_product' => $id_entity));
-                    }
-                }
-            }
-        } else {
-            @unlink($orig_tmpfile);
-            return false;
-        }
-        unlink($orig_tmpfile);
-        return true;
-    }
-
-    private function get_best_path($tgt_width, $tgt_height, $path_infos)
-    {
-        $path_infos = array_reverse($path_infos);
-        $path       = '';
-        foreach ($path_infos as $path_info) {
-            list($width, $height, $path) = $path_info;
-            if ($width >= $tgt_width && $height >= $tgt_height) {
-                return $path;
-            }
-        }
-        return $path;
-    }
-
-    /**
      * Add or update feature value
      *
      * @param int $featureId
@@ -795,8 +831,9 @@ class ImportProduct extends ImportAbstract
     protected function _getFeatureOffsets()
     {
         $features     = array(
-            'select'  => array(),
-            'default' => array()
+            'select'      => array(),
+            'multiSelect' => array(),
+            'default'     => array()
         );
 
         $filter       = '#^(.+?)-(\w{2,3})$#';
@@ -809,6 +846,8 @@ class ImportProduct extends ImportAbstract
 
                 if ($mapping['type'] == 'pim_catalog_simpleselect') {
                     $featureType = 'select';
+                } elseif ($mapping['type'] == 'pim_catalog_multiselect') {
+                    $featureType = 'multiSelect';
                 } else {
                     $featureType = 'default';
                 }
@@ -825,5 +864,152 @@ class ImportProduct extends ImportAbstract
             }
         }
         return $features;
+    }
+
+    /**
+     * Updates the attachments for a product
+     *
+     * @param Product $product       the product that will be updated
+     * @param array   $files         list of paths for each file that will be attached to the product
+     * @param int     $defaultLangId the id of the default lang
+     *
+     * @return bool
+     */
+    protected function _updateAttachments($product, $files, $defaultLangId)
+    {
+        $errors = 0;
+
+        $oldAttachments = $product->getAttachments($defaultLangId);
+        $attachments    = array();
+        foreach ($oldAttachments as $oldAttachment) {
+            $attachments[$oldAttachment['file_name']] = $oldAttachment['id_attachment'];
+        }
+
+        Attachment::deleteProductAttachments($product->id);
+        $newAttachments = array();
+
+        foreach ($files as $path) {
+            $fileName = basename($path);
+
+            if (!file_exists($path)) {
+                $this->logError($product->reference . ' : attachment ' . $path . ' does not exist');
+                $errors++;
+                continue;
+            }
+
+            if (array_key_exists($fileName, $attachments)) {
+                $attachment = new Attachment($attachments[$fileName]);
+            } else {
+                $attachment            = new Attachment();
+                $attachment->file_name = $fileName;
+                $attachment->name      = array($defaultLangId => substr($attachment->file_name, 0, 32));
+
+                do {
+                    $uniqueId = sha1(microtime());
+                } while (file_exists(_PS_DOWNLOAD_DIR_ . $uniqueId));
+                $attachment->file = $uniqueId;
+            }
+
+            $fileInfo         = finfo_open(FILEINFO_MIME_TYPE);
+            $attachment->mime = finfo_file($fileInfo, $path);
+            finfo_close($fileInfo);
+
+            if (!rename($path, _PS_DOWNLOAD_DIR_ . $attachment->file)) {
+                $this->logError($product->reference . ' : could not copy attachment ' . $attachment->file_name);
+                $errors++;
+            } elseif (!$attachment->save()) {
+                $this->logError($product->reference . ' : could not save attachment ' . $attachment->file_name);
+                $errors++;
+                unlink(_PS_DOWNLOAD_DIR_ . $attachment->file);
+            } else {
+                $newAttachments[] = $attachment->id;
+
+                if (_PS_MODE_DEV_) {
+                    $this->log($product->reference . ' : attachment ' . $attachment->file_name . ' saved');
+                }
+            }
+        }
+
+        if (!empty($newAttachments)) {
+            if (!Attachment::attachToProduct($product->id, $newAttachments)) {
+                $this->logError($product->reference . ' : could not attach files to product');
+                $errors++;
+            } elseif (_PS_MODE_DEV_) {
+                $this->log($product->reference . ' : files attached to product');
+            }
+        }
+
+        return $errors == 0;
+    }
+
+    /**
+     * Remove the attachments that are not attached to any product
+     *
+     * @return bool
+     */
+    protected function _removeUnusedAttachments()
+    {
+        $attachments = Db::getInstance()->executeS('
+            SELECT `id_attachment`
+            FROM `' . _DB_PREFIX_ . 'attachment`
+            WHERE `id_attachment` NOT IN (
+                SELECT DISTINCT (`id_attachment`)
+                FROM `' . _DB_PREFIX_ . 'product_attachment`
+            )'
+        );
+
+        if ($attachments === false) {
+            $this->logError('Could not retrieve unused attachments');
+            return false;
+        } else {
+            $result = true;
+
+            if (!empty($attachments)) {
+                foreach ($attachments as $attachmentId) {
+                    $attachment = new Attachment($attachmentId['id_attachment']);
+                    if (!$attachment->delete()) {
+                        $this->logError('Could not delete attachment ' . $attachment->file_name);
+                        $result = false;
+                    }
+                }
+
+                if (_PS_MODE_DEV_) {
+                    $this->log('Unused attachments removed');
+                }
+            }
+            return $result;
+        }
+    }
+
+    /**
+     * Saves a custom feature for a product
+     *
+     * @param Product $product
+     * @param int     $featureId
+     * @param string  $featureCode
+     * @param array   $values
+     *
+     * @return bool
+     */
+    protected function _saveCustomFeature($product, $featureId, $featureCode, $values)
+    {
+        try {
+            $featureValueId = $this->_addFeatureValue($featureId, $values);
+        } catch (PrestaShopException $e) {
+            $this->logError('Error while saving feature value for ' . $featureCode . ' : ' . $e->getMessage());
+            return false;
+        }
+
+        if (!$featureValueId) {
+            $this->logError($product->reference . ' : could not save feature value for ' . $featureCode);
+            return false;
+        }
+
+        if (!Product::addFeatureProductImport($product->id, $featureId, $featureValueId)) {
+            $this->logError($product->reference . ' : could not associate to feature value ' . $featureCode . ' for feature ' . $featureCode);
+            return false;
+        }
+
+        return true;
     }
 }

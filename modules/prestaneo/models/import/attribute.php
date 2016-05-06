@@ -95,21 +95,29 @@ class ImportAttribute extends ImportAbstract
                 continue;
             }
 
-            //Images have a special treatment as there can be many linked to the same PrestaShop field
-            if ($type == 'pim_catalog_image') {
+            //Images and files have a special treatment as there can be many linked to the same PrestaShop field
+            if ($type == 'pim_catalog_image' || $type == 'pim_catalog_file') {
+                $separatorOffset = strrpos($type, '_');
+                if ($separatorOffset === false) {
+                    $fieldType = $type;
+                } else {
+                    $fieldType = substr($type, $separatorOffset + 1);
+                }
+
                 if (!MappingProducts::existCodeAkeneo($code)) {
                     $mapping = new MappingProducts();
                     $mapping->champ_akeneo     = $code;
-                    $mapping->champ_prestashop = 'image';
+                    $mapping->champ_prestashop = $fieldType;
+                    $mapping->required         = false;
 
                     if (!$mapping->add()) {
-                        $this->logError('Could not save mapping for image field ' . $code);
+                        $this->logError('Could not save mapping for ' . $fieldType . ' field ' . $code);
                         $errorCount++;
                     } elseif (_PS_MODE_DEV_) {
-                        $this->log('New image attribute ' . $code . ' added');
+                        $this->log('New ' . $fieldType . ' attribute ' . $code . ' added');
                     }
                 } elseif (_PS_MODE_DEV_) {
-                    $this->log('Image attribute ' . $code . ' already known');
+                    $this->log(ucfirst($fieldType) . ' attribute ' . $code . ' already known');
                 }
                 continue;
             }

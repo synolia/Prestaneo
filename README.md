@@ -48,9 +48,6 @@ Multiple configurations are available in the addon graphic interface:
     * Reset features before import them
 * Other settings are **mappings between CSV columns and Prestashop attributes**.
 
-## Current version 
-1.0 : It's just you and me Prestashop!
-
 ## About Synolia
 
 Founded in 2004, **[Synolia] (http://www.synolia.com)** is a French e-commerce & CRM company based in Lyon and Paris. With more than 650 projects in both B2B and B2C, Synolia is specialized in designing and delivering the best customer experience.

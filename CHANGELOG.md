@@ -1,3 +1,15 @@
+# 0.1.3
+**Fixed bugs:**
+- Image will now be correctly imported when their path contains special characters
+- Default price if no mapping exists in product import is now a valid value
+- If any variant has been removed since the last variant import, product import will now skip it
+- The tab icon for Prestaneo is now displayed
+
+**Implemented enhancements:**
+- Product import now supports cross-selling and attachments
+- During product import, values for multi-select features will now be translated
+- Variant import creates hidden products that will take their name and reference from the group
+
 # 0.1.2 (2016-04-22)
 **Fixed bugs:**
 - Check if MOD_FTP constant hasn't already been defined for compatibility with some other modules

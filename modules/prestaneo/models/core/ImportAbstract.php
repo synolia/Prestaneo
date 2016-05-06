@@ -12,17 +12,14 @@ class ImportAbstract extends Importer
     }
 
     /**
-     * Sanitizes a full line of data before returning it
+     * Trims a full line of data before returning it
      *
-     * @param $line
-     * @return mixed
+     * @param array $line
+     *
+     * @return array
      */
     protected function _cleanDataLine($line) {
-        $enclosure = (Configuration::get(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE') ? Configuration::get(MOD_SYNC_NAME . '_IMPORT_ENCLOSURE') : ';');
-
         foreach ($line as &$item) {
-            $item = preg_replace('/\s+/', ' ', $item);
-            $item = str_replace('' . $enclosure . '', '', $item);
             $item = trim($item);
         }
         return $line;
@@ -94,9 +91,9 @@ class ImportAbstract extends Importer
     /**
      * Replaces offset names from Akeneo by the PrestaShop equivalents and filters non wanted offsets
      *
-     * @param       $classes
-     * @param array $mappings
-     * @param array $exclude list of PrestaShop fields for which name replacement should not be done
+     * @param array|string $classes
+     * @param array        $mappings
+     * @param array        $exclude list of PrestaShop fields for which name replacement should not be done
      *
      * @return bool
      */
@@ -130,9 +127,12 @@ class ImportAbstract extends Importer
         }
         $mappings = array_diff($mappings, $exclude);
 
-        $offsetFields  = array_keys($this->_offsets);
         $defaultLangId = Configuration::get('PS_LANG_DEFAULT');
         $filter        = '#^(.+?)-(\w{2,3})$#';
+
+        $offsetFields  = array_keys($this->_offsets);
+        //Used to easily check if a translated special field is present
+        $presentFields = array_unique(preg_replace($filter, '$1', $offsetFields));
 
         $newOffsets = array(
             'default' => array(),
@@ -150,30 +150,33 @@ class ImportAbstract extends Importer
                 } else {
                     $fieldType = 'default';
                 }
+            } elseif (array_key_exists($akeneo, $this->_offsets) || in_array($akeneo, $presentFields)) {
+                $fieldType = 'special';
+            } else {
+                continue;
+            }
 
-                if ($fieldType == 'lang') {
-                    $matches = preg_grep('#^' . $akeneo . '-(\w{2,3})$#', $offsetFields);
+            if ($fieldType == 'lang' || ($fieldType == 'special' && !array_key_exists($akeneo, $this->_offsets))) {
+                $matches = preg_grep('#^' . $akeneo . '-(\w{2,3})$#', $offsetFields);
 
-                    foreach ($matches as $fullField) {
-                        if (preg_match($filter, $fullField, $result)) {
-                            if (!array_key_exists($result[2], $this->_langs)) {
-                                continue;
-                            }
-                            $langId = $this->_langs[$result[2]];
-                        } else {
-                            $langId = $defaultLangId;
+                foreach ($matches as $fullField) {
+                    if (preg_match($filter, $fullField, $result)) {
+                        if (!array_key_exists($result[2], $this->_langs)) {
+                            continue;
                         }
-                        $newOffsets[$fieldType][$presta][$langId] = $this->_offsets[$fullField];
+                        $langId = $this->_langs[$result[2]];
+                    } else {
+                        $langId = $defaultLangId;
                     }
-                } elseif (array_key_exists($akeneo, $this->_offsets)) {
-                    $newOffsets[$fieldType][$presta] = $this->_offsets[$akeneo];
+                    $newOffsets[$fieldType][$presta][$langId] = $this->_offsets[$fullField];
                 }
             } elseif (array_key_exists($akeneo, $this->_offsets)) {
-                $newOffsets['special'][$presta] = $this->_offsets[$akeneo];
+                $newOffsets[$fieldType][$presta] = $this->_offsets[$akeneo];
             }
         }
 
         $this->_offsets = $newOffsets;
+        return true;
     }
 
     /**

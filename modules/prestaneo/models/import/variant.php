@@ -54,12 +54,12 @@ class ImportVariant extends ImportAbstract
             return false;
         }
 
-        self::_resetMappingTmpAttributes();
-
         $this->_offsets = array_flip($headers);
 
+        $this->_getLangsInCsv($headers);
         $this->_mapOffsets('MappingTmpAttributes', MappingAttributes::getAllPrestashopFields());
 
+        $defaultLangId  = Configuration::get('PS_LANG_DEFAULT');
         $errorCount     = 0;
         $lastErrorCount = 0;
 
@@ -91,31 +91,63 @@ class ImportVariant extends ImportAbstract
             $id = MappingTmpAttributes::getIdByCode($code);
             if ($id) {
                 $mapping = new MappingTmpAttributes($id);
+                $product = new Product($id);
+
             } else {
                 $mapping = new MappingTmpAttributes();
+                $product = new Product();
+
+                $product->reference           = $code;
+                $product->visibility          = 'none';
+                $product->show_price          = false;
+                $product->available_for_order = false;
             }
 
             $mapping->code = $code;
             $mapping->axis = $axis;
 
-            if (!$mapping->save()){
-                $this->logError('Error while saving : ' . $code . '/' . $axis . ' (line ' . ($line + 2) . ')');
-                $errorCount++;
-            } elseif (_PS_MODE_DEV_) {
-                $this->log('Variant ' . $code . ' added');
+            $emptyName = true;
+            if (array_key_exists('name', $this->_offsets['special'])) {
+                if (is_array($this->_offsets['special']['name'])) {
+                    foreach ($this->_offsets['special']['name'] as $langId => $nameOffset) {
+                        $product->name[$langId] = $data[$nameOffset];
+                        $emptyName &= empty($data[$nameOffset]);
+                    }
+                } else {
+                    $product->name[$defaultLangId] = $data[$this->_offsets['special']['name']];
+                    $emptyName = empty($data[$this->_offsets['special']['name']]);
+                }
+            }
+
+            if ($emptyName) {
+                $product->name[$defaultLangId] = $code;
+            }
+
+            foreach ($product->name as $langId => $name) {
+                $product->link_rewrite[$langId] = Tools::link_rewrite($name);
+            }
+
+            if (!$product->save()) {
+                $this->logError('Could not save product for variant ' . $code);
+            } else {
+                if (_PS_MODE_DEV_) {
+                    $this->log('Product saved for variant ' . $code);
+                }
+
+                if (!$id) {
+                    $mapping->id_product = $product->id;
+                }
+
+                if (!$mapping->save()){
+                    $this->logError('Error while saving : ' . $code . '/' . $axis . ' (line ' . ($line + 2) . ')');
+                    $errorCount++;
+                } elseif (_PS_MODE_DEV_) {
+                    $this->log('Variant ' . $code . ' added');
+                }
             }
         }
         $endStatus = ($errorCount == $lastErrorCount);
         $this->_mover->finishAction(basename($currentFile), $endStatus);
         return true;
-    }
-
-    protected static function _resetMappingTmpAttributes()
-    {
-        $collection = new PrestaShopCollection('MappingTmpAttributes');
-
-        foreach ($collection->getResults() as $mapping) {
-            $mapping->delete();
-        }
     }
 }

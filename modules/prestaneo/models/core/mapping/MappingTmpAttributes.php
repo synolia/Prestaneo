@@ -2,15 +2,17 @@
 
 class MappingTmpAttributes extends MappingCodeAbstract
 {
+    public $id_product;
     public $code;
     public $axis;
 
     public static $definition = array(
         'table'   => 'mapping_tmp_attributes',
-        'primary' => 'id_mapping',
+        'primary' => 'id_product',
         'fields'  => array(
-            'code' => array('type' => self::TYPE_STRING, 'validate' => 'isGenericName'),
-            'axis' => array('type' => self::TYPE_STRING),
+            'id_product' => array('type' => self::TYPE_INT, 'validate' => 'isUnsignedId'),
+            'code'       => array('type' => self::TYPE_STRING, 'validate' => 'isGenericName'),
+            'axis'       => array('type' => self::TYPE_STRING),
         )
     );
 

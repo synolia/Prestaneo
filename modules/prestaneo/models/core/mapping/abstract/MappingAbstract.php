@@ -4,6 +4,7 @@ abstract class MappingAbstract extends ObjectModel
 {
     public $champ_akeneo;
     public $champ_prestashop;
+    public $required;
 
     public static function getAll()
     {
