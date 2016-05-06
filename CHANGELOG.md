@@ -1,4 +1,4 @@
-# 0.1.3
+# 0.1.3 (2016-05-06)
 **Fixed bugs:**
 - Image will now be correctly imported when their path contains special characters
 - Default price if no mapping exists in product import is now a valid value
