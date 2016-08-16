@@ -41,7 +41,7 @@ class Prestaneo extends Module
     public function __construct()
     {
         $this->name = MOD_SYNC_NAME;
-        $this->version = '0.1.3';
+        $this->version = '0.1.4';
         $this->author = MOD_SYNC_DISPLAY_AUTHOR;
         $this->bootstrap = true;
 
@@ -1310,7 +1310,7 @@ class Prestaneo extends Module
                 'import'        => $this->readImportFolder(),
                 'link'          => $this->context->link,
                 'path'          => '/modules/'.$this->name,
-                'cronpath'      => $this->context->shop->getBaseURL().'modules/'.$this->name.'/cron.php',
+                'cronpath'      => $this->context->shop->getBaseURL(true).'modules/'.$this->name.'/cron.php',
                 'export'        => $this->readExportFolder(),
                 'mod_sync'      => MOD_SYNC,
                 'mod_sync_name' => MOD_SYNC_NAME,

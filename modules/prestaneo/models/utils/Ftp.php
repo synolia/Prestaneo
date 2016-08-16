@@ -21,15 +21,18 @@ Class UtilsFtp
     {
     }
 
-    public function setParameters($user, $password, $host, $port=null, $path=null, $timeout=null)
+    public function setParameters($user, $password, $host, $port=null, $path=null, $timeout=null, $passiveMode=false,
+                                  $forceSsl = false)
     {
         $this->_parameters = array(
-            'username'  => $user,
-            'password'  => $password,
-            'host'      => $host,
-            'path'      => $path,
-            'port'      => $port,
-            'timeout'   => $timeout,
+            'username'     => $user,
+            'password'     => $password,
+            'host'         => $host,
+            'path'         => $path,
+            'port'         => $port,
+            'timeout'      => $timeout,
+            'passive_mode' => $passiveMode,
+            'force_ssl'    => $forceSsl,
         );
         return $this;
     }
@@ -65,18 +68,21 @@ Class UtilsFtp
     {
         $ftpClient = $this->_getHandler();
 
-        if (!$ftpClient->cd($distantFolderPath)) {
+        if (!$ftpClient->cd($distantFolderPath))
+        {
             throw new Exception('Can\'t open ftp folder : ' . $distantFolderPath, 5);
         }
 
         $ls = $ftpClient->rawls();
 
-        if (!is_array($grep)) {
+        if (!is_array($grep))
+        {
             $grep = array($grep);
         }
 
         $return = true;
-        foreach ($ls as $file) {
+        foreach ($ls as $file)
+        {
             preg_match('/^(.)(?:\S+\s+){8}(.+)$/', $file, $matches);
             //$matches[1] is the type of file
             //$matches[2] is the name of the file
@@ -84,21 +90,28 @@ Class UtilsFtp
             $distantFile = $distantFolderPath . $matches[2];
             $localFile   = $localFolderPath . $matches[2];
 
-            if ($matches[1] == 'd') {
-                if(!($this->recursiveGetFiles($distantFile . '/', $localFile . '/', $grep))) {
+            if ($matches[1] == 'd')
+            {
+                if(!($this->recursiveGetFiles($distantFile . '/', $localFile . '/', $grep)))
+                {
                     $return = false;
                 }
-            } elseif ($matches[1] == '-') {
+            }
+            elseif ($matches[1] == '-')
+            {
                 $isMatch = empty($grep);
 
-                foreach ($grep as $pattern) {
-                    if (fnmatch($pattern, $matches[2])) {
+                foreach ($grep as $pattern)
+                {
+                    if (fnmatch($pattern, $matches[2]))
+                    {
                         $isMatch = true;
                         break;
                     }
                 }
 
-                if ($isMatch && !$this->getFile($distantFile, $localFile)) {
+                if ($isMatch && !$this->getFile($distantFile, $localFile))
+                {
                     $return = false;
                 }
             }
@@ -114,7 +127,7 @@ Class UtilsFtp
             $localFolderPath = null;
         }
         $matchingFileList = $this->getFolderContent($grep, $distantFolderPath);
-        $return = !empty($matchingFileList);
+        $return           = !empty($matchingFileList);
         foreach($matchingFileList as $matchingFile)
         {
             if(!$this->getFile($matchingFile, $localFolderPath.'/'.$matchingFile))
@@ -138,21 +151,25 @@ Class UtilsFtp
         $folderContents       = $ftpClient->ls();
         $formatFolderContents = array();
 
-        if (!is_array($grep)) {
+        if (!is_array($grep))
+        {
             $grep = array($grep);
         }
 
-        foreach ($folderContents as $folderContent) {
+        foreach ($folderContents as $folderContent)
+        {
             $isMatch = empty($grep);
 
             foreach ($grep as $pattern) {
-                if (fnmatch($pattern, $folderContent['text'])) {
+                if (fnmatch($pattern, $folderContent['text']))
+                {
                     $isMatch = true;
                     break;
                 }
             }
 
-            if ($isMatch) {
+            if ($isMatch)
+            {
                 $formatFolderContents[] = $folderContent['text'];
             }
         }
@@ -196,6 +213,8 @@ Class UtilsFtp
      * @param string $args[port] Remote port
      * @param string $args[username] Remote username
      * @param string $args[password] Connection password
+     * @param string $args[force_ssl] force SSL connection, by default set to false
+     * @param string $args[passive_mode] Set passive mode, by default set to false
      * @param int $args[timeout] Connection timeout [=10]
      *
      */
@@ -205,6 +224,17 @@ Class UtilsFtp
         {
             $args['timeout'] = self::REMOTE_TIMEOUT;
         }
+
+        if (!isset($args['force_ssl']))
+        {
+            $args['force_ssl'] = false;
+        }
+
+        if (!isset($args['passive_mode']))
+        {
+            $args['passive_mode'] = false;
+        }
+
         if (strpos($args['host'], ':') !== false)
         {
             list($host, $port) = explode(':', $args['host'], 2);
@@ -219,11 +249,28 @@ Class UtilsFtp
             $host = $args['host'];
             $port = self::FTP_PORT;
         }
-        $this->_connection = ftp_connect($host, $port, $args['timeout']);
+
+        if ($args['force_ssl'] && !function_exists('ftp_ssl_connect'))
+        {
+            throw new Exception(sprintf('Your server doesn\'t support FTPs connection', $host));
+        }
+
+        $this->_connection = ftp_ssl_connect($host, $port, $args['timeout']);
+        if (!$this->_connection)
+        {
+            if ($args['force_ssl'])
+            {
+                throw new Exception(sprintf('Unable to open FTPs connection as %s@%s', $args['username'], $host));
+            }
+            $this->_connection = ftp_connect($host, $port, $args['timeout']);
+        }
+
         if (!ftp_login($this->_connection, $args['username'], $args['password']))
         {
-            throw new Exception(sprintf("Unable to open FTP connection as %s@%s", $args['username'], $host));
+            throw new Exception(sprintf('Unable to open FTP connection as %s@%s', $args['username'], $host));
         }
+
+        ftp_pasv($this->_connection, $args['passive_mode']);
     }
 
     /**
@@ -429,6 +476,14 @@ Class UtilsFtp
     public function ls()
     {
         $list = ftp_nlist($this->_connection, '.');
+
+        // If an error occured during nlist, try passive mode
+        if (!$list)
+        {
+            ftp_pasv($this->_connection, true);
+            $list = ftp_nlist($this->_connection, '.');
+        }
+
         $pwd = $this->pwd();
         $result = array();
         foreach($list as $name)

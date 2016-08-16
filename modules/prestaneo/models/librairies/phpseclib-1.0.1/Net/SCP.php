@@ -17,7 +17,7 @@
  *    if (!$ssh->login('username', 'password')) {
  *        exit('bad login');
  *    }
-
+ *
  *    $scp = new Net_SCP($ssh);
  *    $scp->put('abcd', str_repeat('x', 1024*1024));
  * ?>
@@ -51,7 +51,7 @@
 
 /**#@+
  * @access public
- * @see Net_SCP::put()
+ * @see self::put()
  */
 /**
  * Reads data from a local file.
@@ -65,8 +65,8 @@ define('NET_SCP_STRING',  2);
 
 /**#@+
  * @access private
- * @see Net_SCP::_send()
- * @see Net_SCP::_receive()
+ * @see self::_send()
+ * @see self::_receive()
  */
 /**
  * SSH1 is being used.
@@ -90,7 +90,7 @@ class Net_SCP
     /**
      * SSH Object
      *
-     * @var Object
+     * @var object
      * @access private
      */
     var $ssh;
@@ -98,7 +98,7 @@ class Net_SCP
     /**
      * Packet Size
      *
-     * @var Integer
+     * @var int
      * @access private
      */
     var $packet_size;
@@ -106,7 +106,7 @@ class Net_SCP
     /**
      * Mode
      *
-     * @var Integer
+     * @var int
      * @access private
      */
     var $mode;
@@ -116,9 +116,9 @@ class Net_SCP
      *
      * Connects to an SSH server
      *
-     * @param String $host
-     * @param optional Integer $port
-     * @param optional Integer $timeout
+     * @param string $host
+     * @param int $port
+     * @param int $timeout
      * @return Net_SCP
      * @access public
      */
@@ -157,11 +157,11 @@ class Net_SCP
      * Currently, only binary mode is supported.  As such, if the line endings need to be adjusted, you will need to take
      * care of that, yourself.
      *
-     * @param String $remote_file
-     * @param String $data
-     * @param optional Integer $mode
-     * @param optional Callable $callback
-     * @return Boolean
+     * @param string $remote_file
+     * @param string $data
+     * @param int $mode
+     * @param callable $callback
+     * @return bool
      * @access public
      */
     function put($remote_file, $data, $mode = NET_SCP_STRING, $callback = null)
@@ -233,9 +233,9 @@ class Net_SCP
      * the operation was unsuccessful.  If $local_file is defined, returns true or false depending on the success of the
      * operation
      *
-     * @param String $remote_file
-     * @param optional String $local_file
-     * @return Mixed
+     * @param string $remote_file
+     * @param string $local_file
+     * @return mixed
      * @access public
      */
     function get($remote_file, $local_file = false)
@@ -291,7 +291,7 @@ class Net_SCP
     /**
      * Sends a packet to an SSH server
      *
-     * @param String $data
+     * @param string $data
      * @access private
      */
     function _send($data)
@@ -303,13 +303,13 @@ class Net_SCP
             case NET_SCP_SSH1:
                 $data = pack('CNa*', NET_SSH1_CMSG_STDIN_DATA, strlen($data), $data);
                 $this->ssh->_send_binary_packet($data);
-         }
+        }
     }
 
     /**
      * Receives a packet from an SSH server
      *
-     * @return String
+     * @return string
      * @access private
      */
     function _receive()
@@ -339,7 +339,7 @@ class Net_SCP
                             return false;
                     }
                 }
-         }
+        }
     }
 
     /**
@@ -355,6 +355,6 @@ class Net_SCP
                 break;
             case NET_SCP_SSH1:
                 $this->ssh->disconnect();
-         }
+        }
     }
 }

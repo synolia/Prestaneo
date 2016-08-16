@@ -1,3 +1,12 @@
+# 0.1.4 (2016-08-16)
+**Fixed bugs:**
+- https cron url
+- sftp recursive get files adapted to new library
+
+**Implemented enhancements:**
+- Passive mode and ssl connection for ftp synchronization
+- Key file authentication for sftp synchronization
+
 # 0.1.3 (2016-05-06)
 **Fixed bugs:**
 - Image will now be correctly imported when their path contains special characters

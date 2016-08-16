@@ -51,7 +51,7 @@ class AdminSyncConfigController extends ModuleAdminController
     public function display()
     {
         $this->context->smarty->assign(array(
-            'cronpath'      => $this->context->shop->getBaseURL().'modules/'.$this->module->name.'/cron.php',
+            'cronpath'      => $this->context->shop->getBaseURL(true).'modules/'.$this->module->name.'/cron.php',
             'mod_sync_name' => MOD_SYNC_NAME,
             'selfLink'      => $this->module->getSelfLink()
         ));

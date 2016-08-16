@@ -2,7 +2,7 @@
 if (!class_exists('Net_SSH2'))
 {
     $includePath = get_include_path();
-    set_include_path(dirname(__FILE__) . '/../librairies/phpseclib-0.3.1/');
+    set_include_path(dirname(__FILE__) . '/../librairies/phpseclib-1.0.1/');
     require_once('Net/SFTP.php');
     set_include_path($includePath);
 }
@@ -26,28 +26,45 @@ Class UtilsSftp
     {
     }
 
-    public function setParameters($user, $password, $host, $port=null, $path=null, $timeout=null)
+    public function setParameters($user, $password, $host, $port=22, $path=null, $timeout=null, $sshKey = null)
     {
         $this->_parameters = array(
-            'username'  => $user,
-            'password'  => $password,
-            'host'      => $host,
-            'path'      => $path,
-            'port'      => $port,
-            'timeout'   => $timeout,
+            'username'      => $user,
+            'password'      => $password,
+            'host'          => $host,
+            'path'          => $path,
+            'port'          => $port,
+            'timeout'       => $timeout,
+            'ssh_key'       => $sshKey,
         );
         if($port)
         {
-            $this->_parameters['host'].':'.$port;
+            $this->_parameters['host'].=':'.$port;
         }
         return $this;
+    }
+
+    /**
+     * Disconnects the current connection
+     */
+    public function disconnect()
+    {
+        return $this->__destruct();
     }
 
     public function __destruct()
     {
         if($this->_opened)
         {
-            $this->_getHandler()->close();
+            if(!is_object($this->_connection))
+            {
+                $this->_handler->_connection->disconnect();
+            }
+            else
+            {
+                $this->_connection->disconnect();
+            }
+            $this->_opened = false;
         }
     }
 
@@ -59,11 +76,11 @@ Class UtilsSftp
             mkdir(dirname($localPath), 0777, true);
 
         $fileData = $this->readFile($distantPath);
-        if(!$fileData)
+        if($fileData === false)
         {
             throw new Exception('Can\'t get distant file : '.$this->_parameters['path'].'/'.$distantPath, 2);
         }
-        if(!@file_put_contents($localPath, $fileData))
+        if(@file_put_contents($localPath, $fileData) === false)
         {
             throw new Exception('Can\'t write local file : '.$localPath, 3);
         }
@@ -73,59 +90,69 @@ Class UtilsSftp
     public function recursiveGetFiles($distantFolderPath, $localFolderPath, $grep = array())
     {
         $sftpClient = $this->_getHandler();
+        $oldPath    = $sftpClient->pwd();
 
-        if (!$sftpClient->cd($distantFolderPath)) {
+        if (!$sftpClient->cd($distantFolderPath))
+        {
             throw new Exception('Can\'t open sftp folder : ' . $distantFolderPath, 5);
         }
 
         $ls = $sftpClient->rawls();
 
-        if (!is_array($grep)) {
+        if (!is_array($grep))
+        {
             $grep = array($grep);
         }
 
         $return = true;
-        foreach ($ls as $file) {
-            preg_match('/^(.)(?:\S+\s+){8}(.+)$/', $file, $matches);
-            //$matches[1] is the type of file
-            //$matches[2] is the name of the file
+        foreach ($ls as $file)
+        {
+            if ($file['filename'] == '.' || $file['filename'] == '..')
+            {
+                continue;
+            }
 
-            $distantFile = $distantFolderPath . $matches[2];
-            $localFile   = $localFolderPath . $matches[2];
+            $distantFile = $distantFolderPath . $file['filename'];
+            $localFile   = $localFolderPath . $file['filename'];
 
-            if ($matches[1] == 'd') {
-                if(!($this->recursiveGetFiles($distantFile . '/', $localFile . '/', $grep))) {
+            if ($file['type'] == 2)
+            {
+                if(!($this->recursiveGetFiles($distantFile . '/', $localFile . '/', $grep)))
+                {
                     $return = false;
                 }
-            } elseif ($matches[1] == '-') {
+            }
+            elseif ($file['type'] == 1)
+            {
                 $isMatch = empty($grep);
 
-                foreach ($grep as $pattern) {
-                    if (fnmatch($pattern, $matches[2])) {
+                foreach ($grep as $pattern)
+                {
+                    if (fnmatch($pattern, $file['filename']))
+                    {
                         $isMatch = true;
                         break;
                     }
                 }
 
-                if ($isMatch && !$this->getFile($distantFile, $localFile)) {
+                if ($isMatch && !$this->getFile($distantFile, $localFile))
+                {
                     $return = false;
                 }
             }
         }
-
+        $sftpClient->cd($oldPath);
         return $return;
     }
 
     public function getFiles($distantFolderPath, $localFolderPath, $grep=array())
     {
-        $includePath = get_include_path();
-        set_include_path(dirname(__FILE__).'/../librairies/phpseclib-0.3.1/');
         if(empty($localFolderPath))
         {
             $localFolderPath = null;
         }
         $matchingFileList = $this->getFolderContent($grep, $distantFolderPath);
-        $return = !empty($matchingFileList);
+        $return           = !empty($matchingFileList);
         foreach($matchingFileList as $matchingFile)
         {
             if(!$this->getFile($matchingFile, $localFolderPath.'/'.$matchingFile))
@@ -133,7 +160,6 @@ Class UtilsSftp
                 $return = false;
             }
         }
-        set_include_path($includePath);
         return $return;
     }
 
@@ -150,21 +176,26 @@ Class UtilsSftp
         $folderContents       = $sftpClient->ls();
         $formatFolderContents = array();
 
-        if (!is_array($grep)) {
+        if (!is_array($grep))
+        {
             $grep = array($grep);
         }
 
-        foreach ($folderContents as $folderContent) {
+        foreach ($folderContents as $folderContent)
+        {
             $isMatch = empty($grep);
 
-            foreach ($grep as $pattern) {
-                if (fnmatch($pattern, $folderContent['text'])) {
+            foreach ($grep as $pattern)
+            {
+                if (fnmatch($pattern, $folderContent['text']))
+                {
                     $isMatch = true;
                     break;
                 }
             }
 
-            if ($isMatch) {
+            if ($isMatch)
+            {
                 $formatFolderContents[] = $folderContent['text'];
             }
         }
@@ -174,7 +205,7 @@ Class UtilsSftp
     public function readFile($filePath)
     {
         $sftpClient = $this->_getHandler();
-        return $sftpClient->read($filePath);
+        return $sftpClient->read($filePath, null);
     }
 
     protected function _getHandler()
@@ -206,12 +237,16 @@ Class UtilsSftp
      * @param array $args Connection arguments
      * @param string $args[host] Remote hostname
      * @param string $args[username] Remote username
-     * @param string $args[password] Connection password
+     * @param string $args[password] Connection password or passphrase in case of ssh key file
      * @param int $args[timeout] Connection timeout [=10]
+     * @param string $args[ssh_key] Set key file path to establish connection authentication
      *
      */
     public function open(array $args = array())
     {
+        $includePath = get_include_path();
+        set_include_path(dirname(__FILE__).'/../librairies/phpseclib-1.0.1/');
+
         if (!isset($args['timeout']))
         {
             $args['timeout'] = self::REMOTE_TIMEOUT;
@@ -225,12 +260,31 @@ Class UtilsSftp
             $host = $args['host'];
             $port = self::SSH2_PORT;
         }
-        $this->_connection = new Net_SFTP($host, $port, $args['timeout']);
-        if (!$this->_connection->login($args['username'], $args['password']))
-        {
-            throw new Exception(sprintf("Unable to open SFTP connection as %s@%s", $args['username'], $args['host']));
-        }
 
+        if (!empty($args['ssh_key']))
+        {
+            require_once('Crypt/RSA.php');
+            $this->_connection = new Net_SFTP($host, $port, $args['timeout']);
+            $key = new Crypt_RSA();
+            if(strlen($args['password'])>0)
+            {
+                $key->setPassword($args['password']);
+            }
+            $key->loadKey($args['ssh_key']);
+            if (!$this->_connection->login($args['username'], $key)) {
+                throw new Exception(sprintf('Unable to open SFTP connection as %s@%s using RSA key', $args['username'], $args['host']));
+            }
+        }
+        else
+        {
+            $this->_connection = new Net_SFTP($host, $port, $args['timeout']);
+            if (!$this->_connection->login($args['username'], $args['password']))
+            {
+                throw new Exception(sprintf('Unable to open SFTP connection as %s@%s', $args['username'], $args['host']));
+            }
+        }
+        $this->_opened = true;
+        set_include_path($includePath);
     }
 
     /**
@@ -239,7 +293,7 @@ Class UtilsSftp
      */
     public function close()
     {
-        return $this->_connection->disconnect();
+        return $this->__destruct();
     }
 
     /**
@@ -352,9 +406,9 @@ Class UtilsSftp
      * Write a file
      * @param $src Must be a local file name
      */
-    public function write($filename, $src)
+    public function write($filename, $src, $mode = NET_SFTP_LOCAL_FILE)
     {
-        return $this->_connection->put($filename, $src);
+        return $this->_connection->put($filename, $src, $mode);
     }
 
     /**
