@@ -20,7 +20,7 @@ Prestaneo reads standard CSV files from the Akeneo exports in order to import da
 * **Multi-site**: Prestaneo is natively compatible with the “multi-store” and the “multi-language” features of Prestashop.
 
 ## Requirements
-**Prestaneo** is designed to work on **Prestashop 1.5+** based on generated CSV files from **Akeneo 1.3+**
+**Prestaneo** is designed to work on **Prestashop 1.5** & **Prestashop 1.6** based on generated CSV files from **Akeneo 1.3+**
 
 PHP : **PHP 5.3+**
 
