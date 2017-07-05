@@ -24,8 +24,10 @@ class MappingCodeAttributeValues extends MappingCodeAbstract
      */
     public static function getIdByCodeAndGroup($code, $attributeGroupCode)
     {
-        if (empty($code) || !$code || empty($attributeGroupCode) || !$attributeGroupCode)
-            return false;
+        if(!is_numeric($code)){
+            if (empty($code) || !$code || empty($attributeGroupCode) || !$attributeGroupCode)
+                return false;
+        }
 
         $sql = 'SELECT `' . self::$definition['primary'] . '`
                 FROM ' . _DB_PREFIX_ . self::$definition['table'] . '
