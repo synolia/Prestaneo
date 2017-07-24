@@ -619,7 +619,7 @@ class ImportProduct extends ImportAbstract
                             $addedImages[] = $image->id;
                         }
                     }
-                    unlink($imagePath);
+                    //unlink($imagePath);
                     $isCover = false;
                 }
                 if (!empty($addedImages) && _PS_MODE_DEV_) {
