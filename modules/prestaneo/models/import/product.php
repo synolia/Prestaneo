@@ -188,6 +188,9 @@ class ImportProduct extends ImportAbstract
             $reference = $data[$referenceOffset];
             $groupCode = $data[$this->_offsets['special']['groups']];
 
+            // QUICK FIX: Helper for Stock Update
+            $dataKeyValue = array_combine($headers, $data);
+            
             $data['emptyValue'] = '';
             $data['zeroValue']  = 0;
 
@@ -368,6 +371,12 @@ class ImportProduct extends ImportAbstract
                 //Product has been saved
                 $processedProducts[$product->id] = $product;
 
+                // QUICK FIX: Save Stock for non Variant products
+                if (isset($dataKeyValue['stock'])) {
+                    $quantity = ($dataKeyValue['stock']) ? $dataKeyValue['stock'] : $this->_quantityDefault;
+                    StockAvailable::setQuantity($product->id, 0, $quantity, $defaultShopId);
+                }
+                
                 // Save Features
                 if ($this->_resetFeatures) {
                     if (!$product->deleteFeatures()) {
@@ -610,7 +619,7 @@ class ImportProduct extends ImportAbstract
                             $addedImages[] = $image->id;
                         }
                     }
-                    unlink($imagePath);
+                    //unlink($imagePath);
                     $isCover = false;
                 }
                 if (!empty($addedImages) && _PS_MODE_DEV_) {
@@ -778,6 +787,12 @@ class ImportProduct extends ImportAbstract
 
         $combination->setImages($images);
         $combination->update();
+        
+        // QUICK FIX: Save Stock for non Variant products
+        if (isset($dataKeyValue['stock'])) {
+            $quantity = ($dataKeyValue['stock']) ? $dataKeyValue['stock'] : $this->_quantityDefault;
+            StockAvailable::setQuantity($product->id, $combination->id, $quantity);
+        }
 
         StockAvailable::setProductDependsOnStock($product->id, $product->depends_on_stock, null, $productAttributeId);
         StockAvailable::setProductOutOfStock($product->id, $product->out_of_stock, null, $productAttributeId);
