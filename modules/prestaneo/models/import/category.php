@@ -142,7 +142,7 @@ class ImportCategory extends ImportAbstract
                 $data[$this->_offsets['default']['id_shop_default']] = $contextShopId;
             }
 
-            if (empty($data[$this->_offsets['default']['active']])) {
+            if (!isset($data[$this->_offsets['default']['active']])) {
                 $data[$this->_offsets['default']['active']] = 1;
             }
 
