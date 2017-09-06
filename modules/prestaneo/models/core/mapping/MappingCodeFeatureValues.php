@@ -24,10 +24,8 @@ class MappingCodeFeatureValues extends MappingCodeAbstract
      */
     public static function getIdByCodeAndFeature($code, $featureCode)
     {
-        if(!is_numeric($code)){
-            if (empty($code) || !$code || empty($featureCode) || !$featureCode)
-                return false;
-        }
+        if (empty($code) || !$code || empty($featureCode) || !$featureCode)
+            return false;
 
         $sql = 'SELECT `' . self::$definition['primary'] . '`
                 FROM ' . _DB_PREFIX_ . self::$definition['table'] . '
