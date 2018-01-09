@@ -1,9 +1,8 @@
-![alt text][logo]
-[logo]: http://www.synolia.com/wp-content/uploads/2016/03/Prestaneo-by-Synolia1.jpg "Prestaneo : Akeneo to prestashop by Synolia"
+!["Prestaneo : Akeneo to prestashop by Synolia"](http://www.synolia.com/wp-content/uploads/2016/03/Prestaneo-by-Synolia1.jpg) 
 
 # PRESTANEO by Synolia
 
-**Prestaneo** is a **Prestashop addon** allowing to import catalogs and product data, from the **Akeneo** standard CSV files.
+**Prestaneo** is a **Prestashop module** allowing to import catalogs and product data, from the **Akeneo** standard CSV files.
 
 ## How it works
 Prestaneo reads standard CSV files from the Akeneo exports in order to import data into your PrestaShop database. These data exchanges allow to import:
@@ -24,7 +23,7 @@ Prestaneo reads standard CSV files from the Akeneo exports in order to import da
 
 PHP : **PHP 5.3+**
 
-**Synolia** recommends to work with the **[Akeneo Enhanced Connector Bundle] (https://github.com/akeneo-labs/EnhancedConnectorBundle)** in order to be more efficient in your interfaces. This bundle allows you to go further to select the right data to export.
+**Synolia** recommends to work with the **[Akeneo Enhanced Connector Bundle](https://github.com/akeneo-labs/EnhancedConnectorBundle)** in order to be more efficient in your interfaces. This bundle allows you to go further to select the right data to export.
 
 ## How to install
 ### Manually
